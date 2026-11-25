@@ -268,4 +268,7 @@ export async function removeMember(email) {
   await fb.updateDoc(fb.doc(db, 'households', hid), { members: fb.arrayRemove(email) });
 }
 
+/** Token Firebase do zapytań do Workera pieca. */
+export const idToken = () => auth?.currentUser?.getIdToken() ?? Promise.resolve(null);
+
 export const isOwner = () => signedIn() && state.owner === uid;

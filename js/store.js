@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = {
   lon: null,
   placeName: '',
   lastBackup: null,
+  hopperBags: null,        // pojemność zasobnika pieca w workach (puste = wylicz z dosypań)
+  dismissedRefills: [],    // odrzucone dosypania wykryte przez piec (czasy)
 };
 
 export function emptyData() {

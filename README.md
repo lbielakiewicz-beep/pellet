@@ -59,3 +59,7 @@ Dane mogą być synchronizowane z Firestore: zakładka **Więcej → Konto i chm
 - Konfiguracja projektu: [js/firebase-config.js](js/firebase-config.js) (`null` = tylko lokalnie).
 - Reguły bezpieczeństwa: [firestore.rules](firestore.rules) – po każdej zmianie wklej je w konsoli Firebase (Firestore → Reguły).
 - W Firebase muszą być włączone metody logowania Email/Password (i opcjonalnie Google), a adres aplikacji dodany w Authentication → Settings → Authorized domains.
+
+## Piec (eModul)
+
+Dane z pieca (poziom zasobnika, temperatury, stan) pobiera Cloudflare Worker [worker/emodul-proxy.js](worker/emodul-proxy.js) – opis zmiennych na początku pliku. Adres Workera: `piecUrl` w [js/firebase-config.js](js/firebase-config.js). Po zmianie kodu Workera wklej go ponownie w Cloudflare (Edit code → Deploy).

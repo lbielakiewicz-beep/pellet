@@ -264,3 +264,18 @@ dialog h2 { margin: 0 0 12px; font-size: 19px; }
 .gbtn { margin-top: 4px; }
 
 .stock-info { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+/* piec (eModul) */
+.piec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.hopper { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.hopper-bar { flex: 1; height: 14px; border-radius: 7px; background: var(--surface2); overflow: hidden; border: 1px solid var(--border); }
+.hopper-bar > div { height: 100%; background: var(--ok, #16a34a); border-radius: 7px; }
+.hopper-bar > div.mid { background: var(--warn, #d97706); }
+.hopper-bar > div.low { background: var(--crit); }
+.hopper-txt { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hopper-txt b { font-size: 20px; }
+.piec-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; }
+.piec-grid > div { display: flex; flex-direction: column; min-width: 0; }
+.piec-grid b { font-variant-numeric: tabular-nums; }
+.row-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.row-btns .btn { min-height: 38px; padding: 6px 12px; }

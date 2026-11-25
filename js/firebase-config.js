@@ -9,3 +9,7 @@ export const firebaseConfig = {
   messagingSenderId: '348325968813',
   appId: '1:348325968813:web:a73a01c61f76fce7d23f24',
 };
+
+// Adres Cloudflare Workera z danymi pieca (eModul), np. 'https://pellet-piec.nazwa.workers.dev'.
+// null = bez integracji z piecem.
+export const piecUrl = 'https://pellet-piec.l-bielakiewicz.workers.dev';

@@ -2,6 +2,7 @@ import * as S from './store.js';
 import * as F from './forecast.js';
 import { getWeather, geocode, tempLookup, weatherInfo } from './weather.js';
 import * as C from './cloud.js';
+import * as P from './piec.js';
 
 const DAY = F.DAY;
 let data = S.load();
@@ -207,13 +208,13 @@ function quickFillDialog() {
   dlg.showModal();
 }
 
-function fillForm(existing) {
+function fillForm(existing, pre = {}) {
   openForm({
     title: existing ? 'Edytuj dosypanie' : 'Dosypanie do zasobnika',
     fields: [
-      { name: 'bags', label: 'Liczba worków', type: 'number', value: existing ? existing.bags : 1, required: true, hint: `1 worek = ${nf(data.settings.bagKg, 1)} kg (zmienisz w Ustawieniach)`, autofocus: true },
-      { name: 'ts', label: 'Kiedy', type: 'datetime-local', value: toLocalInput(existing ? existing.ts : Date.now()), required: true },
-      { name: 'note', label: 'Notatka', type: 'textarea', value: existing?.note || '' },
+      { name: 'bags', label: 'Liczba worków', type: 'number', value: existing ? existing.bags : pre.bags ?? 1, required: true, hint: `1 worek = ${nf(data.settings.bagKg, 1)} kg (zmienisz w Ustawieniach)`, autofocus: true },
+      { name: 'ts', label: 'Kiedy', type: 'datetime-local', value: toLocalInput(existing ? existing.ts : pre.ts ?? Date.now()), required: true },
+      { name: 'note', label: 'Notatka', type: 'textarea', value: existing?.note || pre.note || '' },
     ],
     onSubmit: v => {
       const b = num(v.bags);
@@ -409,6 +410,40 @@ function drawBarChart(el, items, fmtVal) {
 const DOW = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
 const tC = v => (v == null || !Number.isFinite(+v) ? '—' : `${nf(Math.round(v))}°`);
 
+function piecPanel() {
+  if (!P.piecConfigured() || !C.signedIn()) return '';
+  const { status: p, error } = P.piec();
+  let refills = '';
+  for (const r of P.pendingRefills(data.settings, data.fills)) {
+    refills += `<div class="status info">${ICON.warn}<span>Piec wykrył dosypanie: <b>${fmtDay(r.ts).toLowerCase()}, ${fmtTime(r.ts)}</b> (${nf(r.from)}% → ${nf(r.to)}%)${r.bags ? `, ok. <b>${nf(r.bags)} ${wordBags(r.bags)}</b>` : ''}.
+      <span class="row-btns"><button class="btn primary" data-act="refillAdd" data-ts="${r.ts}" data-bags="${r.bags ?? ''}">Dodaj wpis</button><button class="btn ghost" data-act="refillNo" data-ts="${r.ts}">To nie dosypanie</button></span></span></div>`;
+  }
+  const unc = P.unconfirmedFill(data.fills);
+  if (unc) refills += `<div class="status warn">${ICON.warn}<span>Dosypano ${nf(unc.bags, 1)} ${wordBags(unc.bags)} (${fmtTime(unc.ts)}), ale poziom w piecu nie wzrósł. <b>Potwierdź zasypanie na panelu pieca</b>, inaczej piec zaniża zapas paliwa.</span></div>`;
+  if (!p) return refills + (error ? `<p class="form-err small">Piec: ${esc(error)}</p>` : '');
+  const pct = p.fuelPct;
+  const cap = P.hopperBags(data.settings, data.fills);
+  const level = pct == null ? '' : `<div class="hopper"><div class="hopper-bar"><div style="width:${Math.max(0, Math.min(100, pct))}%" class="${pct <= 15 ? 'low' : pct <= 30 ? 'mid' : ''}"></div></div>
+      <div class="hopper-txt"><b>${nf(pct)}%</b>${cap ? ` <span class="muted">≈ ${nf((pct / 100) * cap.bags, 1)} ${wordBags((pct / 100) * cap.bags)}${cap.estimated ? ' (szac.)' : ''}</span>` : ''}</div></div>`;
+  const t = (l, v) => (v == null ? '' : `<div><span class="muted small">${l}</span><b>${nf(v, 1)}°</b></div>`);
+  const age = Date.now() - p.ts;
+  return `${refills}<section class="card piec">
+    <div class="piec-head"><span class="label">Zasobnik pieca</span><span class="muted small">${p.online ? '' : 'piec offline · '}odczyt ${age > DAY ? fmtShort(p.ts) + ' ' : ''}${fmtTime(p.ts)}</span></div>
+    ${level}
+    <div class="piec-grid">
+      ${p.state ? `<div><span class="muted small">Stan</span><b>${esc(p.state)}</b></div>` : ''}
+      ${t('Kocioł (CO)', p.tempCO)}${t('Woda (CWU)', p.tempCWU)}${t('Spaliny', p.tempFlue)}${t('Na zewnątrz', p.tempOut)}
+      ${p.feeder != null ? `<div><span class="muted small">Podajnik</span><b>${p.feeder ? 'pracuje' : 'stoi'}</b></div>` : ''}
+    </div>
+    ${error ? `<p class="form-err small">${esc(error)}</p>` : ''}
+  </section>`;
+}
+
+async function refreshPiec() {
+  if (!P.piecConfigured() || !C.signedIn()) return;
+  if (await P.refreshPiec(C.idToken)) safeRender();
+}
+
 function weatherPanel() {
   if (data.settings.lat == null) return '';
   if (!weather?.current && !Object.keys(weather?.days || {}).length) {
@@ -504,6 +539,7 @@ function viewDashboard() {
       ${hero}
     </section>
     ${order}
+    ${piecPanel()}
     ${weatherPanel()}
     ${c.mid.series.length > 2 ? `<section class="card"><h3>Prognoza stanu magazynu</h3><div class="chart" id="stockChart"></div><p class="muted small">${modelTxt}${weatherLoading ? ' Pobieram pogodę…' : ''}</p></section>` : modelTxt ? `<p class="muted small pad">${modelTxt}</p>` : ''}
     <section class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><span class="label">${l}</span><span class="v">${v}</span>${sub ? `<span class="muted small">${sub}</span>` : ''}</div>`).join('')}</section>
@@ -654,6 +690,7 @@ function viewMore() {
         ${fieldHtml({ name: 'leadDays', label: 'Czas dostawy (dni)', type: 'number', value: s.leadDays, half: true })}
         ${fieldHtml({ name: 'safetyDays', label: 'Zapas bezpieczeństwa (dni)', type: 'number', value: s.safetyDays, half: true })}
         ${fieldHtml({ name: 'baseTemp', label: 'Temp. bazowa (°C)', type: 'number', value: s.baseTemp, half: true, hint: 'powyżej niej dom nie potrzebuje grzania' })}
+        ${P.piecConfigured() ? fieldHtml({ name: 'hopperBags', label: 'Pojemność zasobnika pieca (worki)', type: 'number', value: s.hopperBags || '', half: true, hint: (() => { const c = P.hopperBags({ ...s, hopperBags: null }, data.fills); return c ? `z dosypań wychodzi ok. ${nf(c.bags, 1)}` : 'puste = wyliczę z dosypań'; })() }) : ''}
         ${fieldHtml({ name: 'fallbackKgPerDay', label: 'Szacowane zużycie na start (kg/dobę)', type: 'number', value: s.fallbackKgPerDay || '', hint: 'używane, dopóki nie ma własnych danych' })}
         <button class="btn primary" type="submit">Zapisz ustawienia</button>
       </form>
@@ -814,6 +851,11 @@ document.addEventListener('click', async e => {
     case 'login':
       try { await C.signIn(); } catch (err) { if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') toast(`Logowanie nieudane: ${C.authError(err)}`); }
       return;
+    case 'refillAdd':
+      return fillForm(null, { ts: Number(d.ts), bags: d.bags ? Number(d.bags) : 1, note: 'wykryte przez piec' });
+    case 'refillNo':
+      data.settings.dismissedRefills = [...(data.settings.dismissedRefills || []).slice(-50), Number(d.ts)];
+      return persist();
     case 'signup': case 'resetPass': {
       const f = $('#authForm');
       const email = f.elements.email.value.trim(), pass = f.elements.pass.value;
@@ -865,6 +907,7 @@ document.addEventListener('submit', async e => {
     s.safetyDays = nn(v.safetyDays, s.safetyDays);
     s.baseTemp = Number.isFinite(num(v.baseTemp)) ? num(v.baseTemp) : s.baseTemp;
     s.fallbackKgPerDay = nn(v.fallbackKgPerDay, 0);
+    if ('hopperBags' in v) s.hopperBags = num(v.hopperBags) > 0 ? num(v.hopperBags) : null;
     persist();
     toast('Zapisano ustawienia');
   } else if (f.id === 'authForm') {
@@ -915,7 +958,7 @@ window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(draw
 // po powrocie do aplikacji (np. następnego dnia) odśwież widok i pogodę
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  render(); refreshWeather();
+  render(); refreshWeather(); refreshPiec();
   // po powrocie z poczty sprawdź, czy konto zostało potwierdzone
   if (C.cloudState().needsVerify) C.checkVerified().catch(() => {});
 });
@@ -941,5 +984,5 @@ window.addEventListener('offline', () => current() === 'wiecej' && safeRender())
 C.initCloud({
   getData: () => data,
   onRemote: applyRemote,
-  onState: () => { if (current() === 'wiecej') safeRender(); },
+  onState: () => { if (current() === 'wiecej') safeRender(); if (C.signedIn()) refreshPiec(); },
 });
