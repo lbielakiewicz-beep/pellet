@@ -498,12 +498,11 @@ function viewDashboard() {
 
   return `
     <section class="card hero">
-      <div class="stock"><span class="label">W magazynie</span><span class="val">${bags(Math.max(0, c.stock))}</span><span class="muted">${nf(Math.max(0, c.stock))} kg</span></div>
+      <div class="stock">
+        <div class="stock-info"><span class="label">W magazynie</span><span class="val">${bags(Math.max(0, c.stock))}</span><span class="muted">${nf(Math.max(0, c.stock))} kg</span></div>
+        <button class="btn add1 mini" data-act="fill1"><span class="plus">+</span> worki${todayBags ? `<small>dziś: ${nf(todayBags, 1)}</small>` : ''}</button>
+      </div>
       ${hero}
-    </section>
-    <section class="quick">
-      <button class="btn add1" data-act="fill1"><span class="plus">+</span> worki<small>${todayBags ? `dziś: ${nf(todayBags, 1)} ${wordBags(todayBags)}` : 'dosypany do zasobnika'}</small></button>
-      <button class="btn secondary" data-act="fillN">Z datą / notatką</button>
     </section>
     ${order}
     ${weatherPanel()}
