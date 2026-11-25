@@ -1,0 +1,38 @@
+rules_version = '2';
+// Reguły bezpieczeństwa Firestore dla aplikacji Pellet.
+// Wklej całość w konsoli Firebase: Firestore Database → Reguły → Opublikuj.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function email() {
+      return request.auth.token.email.lower();
+    }
+    function isMember(hid) {
+      return signedIn() && (request.auth.uid == hid
+        || email() in get(/databases/$(db)/documents/households/$(hid)).data.members);
+    }
+
+    match /households/{hid} {
+      allow get: if isMember(hid);
+      // wyszukanie gospodarstw, do których mam dostęp
+      allow list: if signedIn() && email() in resource.data.members;
+      // własne gospodarstwo zakłada tylko jego właściciel
+      allow create: if signedIn() && request.auth.uid == hid
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.members == [email()];
+      // domownik zmienia tylko ustawienia; listę osób – wyłącznie właściciel
+      allow update: if isMember(hid)
+        && request.resource.data.owner == resource.data.owner
+        && (request.auth.uid == resource.data.owner
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['settings']));
+      allow delete: if false;
+
+      match /{col}/{id} {
+        allow read, write: if isMember(hid)
+          && col in ['fills', 'purchases', 'inventories', 'suppliers'];
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import * as S from './store.js';
 import * as F from './forecast.js';
 import { getWeather, geocode, tempLookup, weatherInfo } from './weather.js';
+import * as C from './cloud.js';
 
 const DAY = F.DAY;
 let data = S.load();
@@ -44,7 +45,39 @@ function wordPallets(n) {
   return d >= 2 && d <= 4 && !(h >= 12 && h <= 14) ? 'palety' : 'palet';
 }
 
-function persist() { S.save(data); render(); }
+function persist() { S.save(data); C.push(data); render(); }
+
+function syncObj(t, src) {
+  for (const k of Object.keys(t)) if (!(k in src)) delete t[k];
+  return Object.assign(t, src);
+}
+
+// zmiany z chmury (inny telefon albo potwierdzenie własnego zapisu)
+function applyRemote(patch) {
+  const before = C.stable(data);
+  const oldLoc = `${data.settings.lat},${data.settings.lon}`;
+  if (patch.settings) syncObj(data.settings, { ...S.DEFAULT_SETTINGS, ...patch.settings });
+  for (const k of C.COLS) {
+    if (!patch[k]) continue;
+    // zachowujemy te same obiekty (otwarty formularz edycji trzyma do nich odwołanie)
+    const byId = new Map(data[k].map(r => [r.id, r]));
+    data[k] = patch[k].map(r => (byId.has(r.id) ? syncObj(byId.get(r.id), r) : r));
+  }
+  if (C.stable(data) === before) return;
+  S.save(data);
+  safeRender();
+  if (`${data.settings.lat},${data.settings.lon}` !== oldLoc) refreshWeather();
+}
+
+// nie przerysowuj widoku, gdy ktoś właśnie coś wpisuje
+let renderLater = false;
+function safeRender() {
+  const a = document.activeElement;
+  if ($('#dlg').open || (a && a.closest('#view') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) { renderLater = true; return; }
+  render();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (renderLater) { renderLater = false; safeRender(); } }, 300));
+$('#dlg').addEventListener('close', () => { if (renderLater) { renderLater = false; safeRender(); } });
 
 function toast(msg, undo) {
   const el = $('#toast');
@@ -476,7 +509,7 @@ function viewDashboard() {
     ${weatherPanel()}
     ${c.mid.series.length > 2 ? `<section class="card"><h3>Prognoza stanu magazynu</h3><div class="chart" id="stockChart"></div><p class="muted small">${modelTxt}${weatherLoading ? ' Pobieram pogodę…' : ''}</p></section>` : modelTxt ? `<p class="muted small pad">${modelTxt}</p>` : ''}
     <section class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><span class="label">${l}</span><span class="v">${v}</span>${sub ? `<span class="muted small">${sub}</span>` : ''}</div>`).join('')}</section>
-    ${backupDue ? `<a class="status info" href="#wiecej">${ICON.warn}<span>Dane są tylko na tym telefonie. <b>Zrób kopię zapasową</b> w zakładce Więcej.</span></a>` : ''}
+    ${backupDue && !C.signedIn() ? `<a class="status info" href="#wiecej">${ICON.warn}<span>Dane są tylko na tym telefonie. <b>Zrób kopię zapasową</b> w zakładce Więcej.</span></a>` : ''}
   `;
 }
 
@@ -636,9 +669,11 @@ function viewMore() {
       </div>
     </section>
 
+    ${accountCard()}
+
     <section class="card">
       <h3>Kopia zapasowa</h3>
-      <p class="small">Dane są zapisane tylko na tym telefonie. Kopię możesz wysłać sobie mailem albo zapisać na Dysku Google. Ostatnia kopia: <b>${s.lastBackup ? fmtDate(s.lastBackup) : 'nigdy'}</b>.</p>
+      <p class="small">${C.signedIn() ? 'Dane są w chmurze, kopia to dodatkowe zabezpieczenie.' : 'Dane są zapisane tylko na tym telefonie.'} Kopię możesz wysłać sobie mailem albo zapisać na Dysku Google. Ostatnia kopia: <b>${s.lastBackup ? fmtDate(s.lastBackup) : 'nigdy'}</b>.</p>
       <div class="btns">
         <button class="btn primary" data-act="backup">Zapisz / wyślij kopię</button>
         <label class="btn secondary">Wczytaj kopię<input type="file" accept=".json,application/json" id="importFile" hidden></label>
@@ -646,6 +681,43 @@ function viewMore() {
       </div>
     </section>
     <p class="muted small pad">Pellet · dane pogodowe: Open-Meteo.com</p>`;
+}
+
+function accountCard() {
+  const cs = C.cloudState();
+  if (!cs.configured) return '';
+  let body;
+  if (!cs.user) {
+    const iosApp = navigator.standalone === true; // aplikacja z ekranu głównego na iPhonie
+    const dis = cs.ready ? '' : 'disabled';
+    body = `<p class="small">Zaloguj się, żeby dane były w chmurze: nie znikną z telefonem, a domownicy mogą wpisywać worki na swoich telefonach.</p>
+      <form id="authForm" class="fields">
+        <label class="field"><span>E-mail</span><input name="email" type="email" autocomplete="username" required></label>
+        <label class="field"><span>Hasło (min. 6 znaków)</span><input name="pass" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit" ${dis}>Zaloguj</button>
+        <button class="btn secondary" type="button" data-act="signup" ${dis}>Załóż konto</button>
+        <button class="btn ghost" type="button" data-act="resetPass" ${dis}>Nie pamiętam hasła</button>
+      </form>
+      ${!iosApp ? `<button class="btn ghost wide gbtn" data-act="login" ${dis}>Zaloguj przez Google</button>` : ''}
+      ${cs.ready ? '' : '<p class="muted small">Logowanie wymaga internetu – otwórz aplikację ponownie z dostępem do sieci.</p>'}`;
+  } else if (cs.needsVerify) {
+    body = `<p class="small">Wysłaliśmy link na <b>${esc(cs.user.email)}</b>. Otwórz maila (sprawdź też spam), kliknij link, a potem wróć tutaj.</p>
+      <div class="btns">
+        <button class="btn primary" data-act="verified">Kliknąłem link – sprawdź</button>
+        <button class="btn secondary" data-act="resendVerify">Wyślij link ponownie</button>
+        <button class="btn ghost" data-act="logout">Anuluj</button>
+      </div>`;
+  } else {
+    const sync = !navigator.onLine ? 'brak internetu – zmiany wyślą się później' : cs.pending ? 'wysyłam zmiany…' : 'zsynchronizowane';
+    const owner = C.isOwner();
+    body = `<p class="small">Zalogowano: <b>${esc(cs.user.email)}</b><br><span class="muted">Stan: ${sync}</span></p>
+      <span class="label">Dostęp do danych</span>
+      <div class="members">${cs.members.map(m => `<div class="member"><span>${esc(m)}${m === cs.user.email ? ' <span class="muted">(Ty)</span>' : ''}</span>${owner && m !== cs.user.email ? `<button class="btn ghost" data-act="memberDel" data-email="${esc(m)}">Usuń</button>` : ''}</div>`).join('')}</div>
+      ${owner ? `<form id="memberAdd" class="inline"><input name="email" type="email" placeholder="e-mail domownika" aria-label="E-mail domownika"><button class="btn secondary" type="submit">Dodaj</button></form>
+      <p class="muted small">Domownik instaluje aplikację i loguje się tym e-mailem (hasło albo konto Google) – zobaczy te same dane.</p>` : ''}
+      <button class="btn ghost wide" data-act="logout">Wyloguj</button>`;
+  }
+  return `<section class="card"><h3>Konto i chmura</h3>${cs.error ? `<p class="form-err">${esc(cs.error)}</p>` : ''}${body}</section>`;
 }
 
 // ---------- routing i obsługa zdarzeń ----------
@@ -740,6 +812,33 @@ document.addEventListener('click', async e => {
       if (res !== 'aborted') { data.settings.lastBackup = Date.now(); persist(); toast('Kopia zapisana'); }
       return;
     }
+    case 'login':
+      try { await C.signIn(); } catch (err) { if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') toast(`Logowanie nieudane: ${C.authError(err)}`); }
+      return;
+    case 'signup': case 'resetPass': {
+      const f = $('#authForm');
+      const email = f.elements.email.value.trim(), pass = f.elements.pass.value;
+      if (!email) return toast('Wpisz e-mail');
+      try {
+        if (d.act === 'resetPass') { await C.resetPassword(email); toast('Wysłano maila do zmiany hasła'); }
+        else { if (pass.length < 6) return toast('Hasło musi mieć co najmniej 6 znaków'); await C.signUpEmail(email, pass); }
+      } catch (err) { toast(C.authError(err)); }
+      return;
+    }
+    case 'verified':
+      try { toast((await C.checkVerified()) ? 'Konto potwierdzone' : 'Jeszcze niepotwierdzone – kliknij link w mailu'); }
+      catch (err) { toast(C.authError(err)); }
+      return;
+    case 'resendVerify':
+      try { await C.resendVerification(); toast('Wysłano ponownie'); } catch (err) { toast(C.authError(err)); }
+      return;
+    case 'logout':
+      if (C.cloudState().needsVerify) { await C.signOut(); return; }
+      if (confirm('Wylogować? Dane zostaną na tym telefonie, ale przestaną się synchronizować.')) await C.signOut();
+      return;
+    case 'memberDel':
+      if (confirm(`Odebrać dostęp: ${d.email}?`)) await C.removeMember(d.email).catch(err => toast(err.message));
+      return;
     case 'csv':
       return S.shareOrDownload(toCsv(), `pellet-${F.ymd(Date.now())}.csv`, 'text/csv');
   }
@@ -769,6 +868,12 @@ document.addEventListener('submit', async e => {
     s.fallbackKgPerDay = nn(v.fallbackKgPerDay, 0);
     persist();
     toast('Zapisano ustawienia');
+  } else if (f.id === 'authForm') {
+    e.preventDefault();
+    try { await C.signInEmail(f.elements.email.value, f.elements.pass.value); } catch (err) { toast(C.authError(err)); }
+  } else if (f.id === 'memberAdd') {
+    e.preventDefault();
+    try { await C.addMember(new FormData(f).get('email')); toast('Dodano dostęp'); } catch (err) { toast(err.message); }
   } else if (f.id === 'locSearch') {
     e.preventDefault();
     const q = new FormData(f).get('q').trim();
@@ -793,7 +898,7 @@ document.addEventListener('change', async e => {
   try {
     const imported = S.normalize(JSON.parse(await file.text()));
     const n = imported.fills.length + imported.purchases.length;
-    if (!confirm(`Wczytać kopię (${n} wpisów)? Obecne dane na tym telefonie zostaną zastąpione.`)) return;
+    if (!confirm(`Wczytać kopię (${n} wpisów)? Obecne dane ${C.signedIn() ? 'w chmurze (na wszystkich telefonach)' : 'na tym telefonie'} zostaną zastąpione.`)) return;
     data = imported;
     persist();
     toast('Wczytano kopię');
@@ -809,7 +914,12 @@ window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); }
 let rt;
 window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawCharts, 150); });
 // po powrocie do aplikacji (np. następnego dnia) odśwież widok i pogodę
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); refreshWeather(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  render(); refreshWeather();
+  // po powrocie z poczty sprawdź, czy konto zostało potwierdzone
+  if (C.cloudState().needsVerify) C.checkVerified().catch(() => {});
+});
 window.addEventListener('storage', e => { if (e.key === 'pellet-data-v1') { data = S.load(); render(); } });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -827,3 +937,10 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 S.requestPersistence();
 render();
 refreshWeather();
+window.addEventListener('online', () => current() === 'wiecej' && safeRender());
+window.addEventListener('offline', () => current() === 'wiecej' && safeRender());
+C.initCloud({
+  getData: () => data,
+  onRemote: applyRemote,
+  onState: () => { if (current() === 'wiecej') safeRender(); },
+});

@@ -51,3 +51,11 @@ Lokalnie na komputerze: `python -m http.server 8000` w folderze projektu → htt
 | [js/weather.js](js/weather.js) | pogoda z Open-Meteo z buforem |
 | [js/store.js](js/store.js) | zapis danych, kopia zapasowa |
 | [sw.js](sw.js), [manifest.webmanifest](manifest.webmanifest) | działanie offline i instalacja |
+
+## Chmura (Firebase)
+
+Dane mogą być synchronizowane z Firestore: zakładka **Więcej → Konto i chmura** (e-mail + hasło, a poza iPhonem także konto Google).
+
+- Konfiguracja projektu: [js/firebase-config.js](js/firebase-config.js) (`null` = tylko lokalnie).
+- Reguły bezpieczeństwa: [firestore.rules](firestore.rules) – po każdej zmianie wklej je w konsoli Firebase (Firestore → Reguły).
+- W Firebase muszą być włączone metody logowania Email/Password (i opcjonalnie Google), a adres aplikacji dodany w Authentication → Settings → Authorized domains.
