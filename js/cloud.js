@@ -12,6 +12,7 @@ const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
 export const COLS = ['fills', 'purchases', 'inventories', 'suppliers'];
 const HID_KEY = 'pellet-cloud-hid';
 const BACKUP_KEY = 'pellet-data-before-cloud';
+const SYNC_KEY = 'pellet-last-sync';
 
 let fb = null, auth = null, db = null;
 let hid = null, uid = null;
@@ -19,10 +20,11 @@ let unsubs = [];
 let remote = {};          // kolekcja -> Map(id -> json) – ostatni znany stan w chmurze
 let remoteSettings = null;
 let pending = {};
+let fromCache = {};
 let dirty = false;        // zmiany lokalne zanim chmura była gotowa
 let hooks = { getData: () => null, onRemote: () => {}, onState: () => {} };
 
-const state = { configured: !!firebaseConfig, ready: false, user: null, needsVerify: false, owner: null, members: [], pending: false, error: '' };
+const state = { configured: !!firebaseConfig, ready: false, user: null, needsVerify: false, lastSync: Number(localStorage.getItem(SYNC_KEY)) || null, owner: null, members: [], pending: false, error: '' };
 export const cloudState = () => state;
 export const signedIn = () => !!(state.user && hid);
 
@@ -117,7 +119,7 @@ export async function resetPassword(email) {
 /** Komunikat błędu logowania po polsku. */
 export function authError(e) {
   return ({
-    'auth/invalid-credential': 'Zły e-mail lub hasło.',
+    'auth/invalid-credential': 'Zły e-mail lub hasło. Nie masz jeszcze konta? Naciśnij „Załóż konto”.',
     'auth/wrong-password': 'Zły e-mail lub hasło.',
     'auth/user-not-found': 'Nie ma konta z tym e-mailem – załóż je.',
     'auth/email-already-in-use': 'Konto z tym e-mailem już istnieje – zaloguj się.',
@@ -138,7 +140,7 @@ export async function signOut() {
 
 function disconnect() {
   unsubs.forEach(u => u());
-  unsubs = []; hid = null; remote = {}; remoteSettings = null; pending = {};
+  unsubs = []; hid = null; remote = {}; remoteSettings = null; pending = {}; fromCache = {};
 }
 
 async function findHousehold(email) {
@@ -202,7 +204,14 @@ function subscribe() {
       const first = !remote[col];
       remote[col] = m;
       pending[col] = snap.metadata.hasPendingWrites;
-      set({ pending: Object.values(pending).some(Boolean) });
+      fromCache[col] = snap.metadata.fromCache;
+      const anyPending = Object.values(pending).some(Boolean);
+      // wszystko potwierdzone przez serwer → zapamiętaj czas synchronizacji
+      if (!anyPending && COLS.every(c => fromCache[c] === false)) {
+        state.lastSync = Date.now();
+        try { localStorage.setItem(SYNC_KEY, String(state.lastSync)); } catch { /* trudno */ }
+      }
+      set({ pending: anyPending });
       hooks.onRemote({ [col]: arr });
       if (first && dirty && COLS.every(c => remote[c])) { dirty = false; push(hooks.getData()); }
     }, fail));

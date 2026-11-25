@@ -710,7 +710,8 @@ function accountCard() {
   } else {
     const sync = !navigator.onLine ? 'brak internetu – zmiany wyślą się później' : cs.pending ? 'wysyłam zmiany…' : 'zsynchronizowane';
     const owner = C.isOwner();
-    body = `<p class="small">Zalogowano: <b>${esc(cs.user.email)}</b><br><span class="muted">Stan: ${sync}</span></p>
+    const last = cs.lastSync ? `${fmtDay(cs.lastSync).toLowerCase()}, ${fmtTime(cs.lastSync)}` : 'jeszcze nie';
+    body = `<p class="small">Zalogowano: <b>${esc(cs.user.email)}</b><br><span class="muted">Stan: ${sync}<br>Ostatnia synchronizacja: ${last}</span></p>
       <span class="label">Dostęp do danych</span>
       <div class="members">${cs.members.map(m => `<div class="member"><span>${esc(m)}${m === cs.user.email ? ' <span class="muted">(Ty)</span>' : ''}</span>${owner && m !== cs.user.email ? `<button class="btn ghost" data-act="memberDel" data-email="${esc(m)}">Usuń</button>` : ''}</div>`).join('')}</div>
       ${owner ? `<form id="memberAdd" class="inline"><input name="email" type="email" placeholder="e-mail domownika" aria-label="E-mail domownika"><button class="btn secondary" type="submit">Dodaj</button></form>
