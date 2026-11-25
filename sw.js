@@ -1,6 +1,6 @@
 // Service worker: aplikacja działa bez internetu.
 // Po każdej zmianie plików aplikacji zwiększ numer wersji.
-const VERSION = 'pellet-v4';
+const VERSION = 'pellet-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -16,7 +16,7 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -33,7 +33,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: zawsze pytamy serwer o świeżą wersję (omijamy 10-min bufor HTTP GitHub Pages)
+    fetch(e.request.url, { cache: 'no-cache' })
       .then(res => {
         if (res.ok) {
           const copy = res.clone();

@@ -813,7 +813,16 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { re
 window.addEventListener('storage', e => { if (e.key === 'pellet-data-v1') { data = S.load(); render(); } });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    // aplikacja z ekranu głównego często tylko wraca z tła – wtedy też sprawdzamy aktualizację
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(err => console.warn('SW', err));
+  // nowa wersja przejęła stronę → przeładuj, żeby od razu ją pokazać
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
 }
 S.requestPersistence();
 render();
