@@ -233,3 +233,21 @@ dialog h2 { margin: 0 0 12px; font-size: 19px; }
 .inline input { flex: 1; }
 #locResults .row { margin: 0; }
 .btns { display: flex; flex-direction: column; gap: 8px; }
+
+/* okno szybkiego dosypania */
+.qf-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 16px; }
+.qf-custom { align-items: flex-end; flex-wrap: nowrap; }
+.qf-custom .field { flex: 1 1 auto; }
+.qf-custom > .btn { flex: 0 0 auto; }
+
+/* panel pogody */
+.wx { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.wx .card { margin: 0; padding: 12px 14px; min-width: 0; }
+.wx-now { display: flex; flex-direction: column; gap: 2px; }
+.wx-main { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.wx-ic { font-size: 34px; line-height: 1; }
+.wx-t { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wx-week ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.wx-week li { display: grid; grid-template-columns: 3.2em 1.6em 1fr; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; }
+.wx-d { color: var(--muted); }
+.wx-r { text-align: right; white-space: nowrap; }

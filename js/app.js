@@ -1,6 +1,6 @@
 import * as S from './store.js';
 import * as F from './forecast.js';
-import { getWeather, geocode, tempLookup } from './weather.js';
+import { getWeather, geocode, tempLookup, weatherInfo } from './weather.js';
 
 const DAY = F.DAY;
 let data = S.load();
@@ -139,6 +139,39 @@ function addFill(bagCount, ts = Date.now(), note = '') {
     data.fills = data.fills.filter(x => x.id !== f.id);
     persist();
   });
+}
+
+// Szybkie dosypanie: okno z przyciskami +1 / +5 albo dowolną liczbą (chroni przed przypadkowym kliknięciem)
+function quickFillDialog() {
+  const dlg = $('#dlg'), form = $('#dlgForm');
+  const bagKg = data.settings.bagKg;
+  form.innerHTML = `<h2>Dosypanie do zasobnika</h2>
+    <div class="qf-presets">
+      <button type="button" class="btn add1" data-qf="1"><span class="plus">+1</span> worek<small>${nf(bagKg, 1)} kg</small></button>
+      <button type="button" class="btn add1" data-qf="5"><span class="plus">+5</span> worków<small>${nf(5 * bagKg, 1)} kg</small></button>
+    </div>
+    <div class="fields qf-custom">
+      <label class="field" for="f_qfBags"><span>Albo wpisz liczbę worków</span>
+        <input id="f_qfBags" name="bags" type="text" inputmode="decimal" placeholder="np. 3"></label>
+      <button type="submit" class="btn primary">Dodaj</button>
+    </div>
+    <p class="form-err" hidden></p>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" data-act="qfMore">Inna data / notatka</button>
+      <span class="sp"></span>
+      <button type="button" class="btn ghost" data-act="cancel">Anuluj</button>
+    </div>`;
+  const done = n => { dlg.close(); addFill(n); };
+  form.querySelectorAll('[data-qf]').forEach(b => (b.onclick = () => done(Number(b.dataset.qf))));
+  form.onsubmit = e => {
+    e.preventDefault();
+    const n = num(form.elements.bags.value);
+    if (!(n > 0)) { const p = form.querySelector('.form-err'); p.textContent = 'Podaj liczbę worków większą od zera.'; p.hidden = false; return; }
+    done(n);
+  };
+  form.querySelector('[data-act=cancel]').onclick = () => dlg.close();
+  form.querySelector('[data-act=qfMore]').onclick = () => { dlg.close(); fillForm(); };
+  dlg.showModal();
 }
 
 function fillForm(existing) {
@@ -340,6 +373,41 @@ function drawBarChart(el, items, fmtVal) {
 }
 
 // ---------- widoki ----------
+const DOW = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
+const tC = v => (v == null || !Number.isFinite(+v) ? '—' : `${nf(Math.round(v))}°`);
+
+function weatherPanel() {
+  if (data.settings.lat == null) return '';
+  if (!weather?.current && !Object.keys(weather?.days || {}).length) {
+    return weatherLoading ? '<p class="muted small pad">Pobieram pogodę…</p>' : '';
+  }
+  const cu = weather.current;
+  const today = F.ymd(Date.now());
+  const td = weather.days?.[today];
+  let now = '';
+  if (cu && cu.temp != null) {
+    const [ic, txt] = weatherInfo(cu.code, cu.isDay);
+    now = `<section class="card wx-now">
+      <span class="label">Teraz</span>
+      <div class="wx-main"><span class="wx-ic">${ic}</span><span class="wx-t">${tC(cu.temp)}</span></div>
+      <div class="small">${esc(txt)}</div>
+      <div class="muted small">odczuwalna ${tC(cu.feels)}${td ? ` · dziś ${tC(td.min)} / ${tC(td.max)}` : ''}</div>
+      <div class="muted small">wiatr ${nf(Math.round(cu.wind ?? 0))} km/h${cu.hum != null ? ` · wilg. ${nf(cu.hum)}%` : ''}</div>
+    </section>`;
+  }
+  const next = Object.keys(weather.days || {}).filter(d => d > today).sort().slice(0, 7);
+  const week = next.length ? `<section class="card wx-week">
+      <span class="label">Najbliższe 7 dni</span>
+      <ul>${next.map(d => {
+        const x = weather.days[d];
+        const [ic, txt] = weatherInfo(x.code);
+        const dow = DOW[new Date(d + 'T12:00').getDay()];
+        return `<li title="${esc(txt)}"><span class="wx-d">${dow}</span><span class="wx-i">${ic}</span><span class="wx-r"><b>${tC(x.max)}</b> <span class="muted">${tC(x.min)}</span></span></li>`;
+      }).join('')}</ul>
+    </section>` : '';
+  return `<div class="wx">${now}${week}</div>`;
+}
+
 function viewDashboard() {
   const empty = !data.fills.length && !data.purchases.length && !data.inventories.length;
   if (empty) return viewOnboarding();
@@ -401,10 +469,11 @@ function viewDashboard() {
       ${hero}
     </section>
     <section class="quick">
-      <button class="btn add1" data-act="fill1"><span class="plus">+1</span> worek<small>${todayBags ? `dziś: ${nf(todayBags, 1)} ${wordBags(todayBags)}` : 'dosypany do zasobnika'}</small></button>
-      <button class="btn secondary" data-act="fillN">Inna ilość</button>
+      <button class="btn add1" data-act="fill1"><span class="plus">+</span> worki<small>${todayBags ? `dziś: ${nf(todayBags, 1)} ${wordBags(todayBags)}` : 'dosypany do zasobnika'}</small></button>
+      <button class="btn secondary" data-act="fillN">Z datą / notatką</button>
     </section>
     ${order}
+    ${weatherPanel()}
     ${c.mid.series.length > 2 ? `<section class="card"><h3>Prognoza stanu magazynu</h3><div class="chart" id="stockChart"></div><p class="muted small">${modelTxt}${weatherLoading ? ' Pobieram pogodę…' : ''}</p></section>` : modelTxt ? `<p class="muted small pad">${modelTxt}</p>` : ''}
     <section class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><span class="label">${l}</span><span class="v">${v}</span>${sub ? `<span class="muted small">${sub}</span>` : ''}</div>`).join('')}</section>
     ${backupDue ? `<a class="status info" href="#wiecej">${ICON.warn}<span>Dane są tylko na tym telefonie. <b>Zrób kopię zapasową</b> w zakładce Więcej.</span></a>` : ''}
@@ -445,8 +514,8 @@ function viewFills() {
   }).join('');
   return `
     <section class="quick">
-      <button class="btn add1" data-act="fill1"><span class="plus">+1</span> worek</button>
-      <button class="btn secondary" data-act="fillN">Inna ilość</button>
+      <button class="btn add1" data-act="fill1"><span class="plus">+</span> worki</button>
+      <button class="btn secondary" data-act="fillN">Z datą / notatką</button>
     </section>
     <button class="btn ghost wide" data-act="inventory">Spis z natury (korekta stanu)</button>
     ${list || '<p class="muted pad">Brak wpisów. Dodaj pierwszy dosypany worek.</p>'}`;
@@ -648,7 +717,7 @@ document.addEventListener('click', async e => {
     return refreshWeather(true);
   }
   switch (d.act) {
-    case 'fill1': return addFill(1);
+    case 'fill1': return quickFillDialog();
     case 'fillN': return fillForm();
     case 'inventory': return inventoryForm();
     case 'purchase': return purchaseForm();

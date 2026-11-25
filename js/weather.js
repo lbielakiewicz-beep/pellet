@@ -3,7 +3,7 @@
 import { buildClimatology, ymd } from './forecast.js';
 
 const KEY = 'pellet-weather-v1';
-const FC_TTL = 3 * 3600 * 1000;
+const FC_TTL = 3600 * 1000;
 const CLIM_TTL = 60 * 86400 * 1000;
 
 function loadCache() {
@@ -41,10 +41,21 @@ export async function getWeather(lat, lon, { force = false } = {}) {
   const today = ymd(now);
 
   try {
-    if (force || !c.forecast || now - (c.fcAt || 0) > FC_TTL) {
+    if (force || !c.forecast || !c.days || now - (c.fcAt || 0) > FC_TTL) {
       const j = await getJson(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-        `&daily=temperature_2m_max,temperature_2m_min&past_days=92&forecast_days=16&timezone=auto`);
+        `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum` +
+        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day` +
+        `&past_days=92&forecast_days=16&timezone=auto`);
       const all = dailyMeans(j);
+      // szczegóły dni od dziś (do panelu pogody)
+      const d = j.daily;
+      c.days = {};
+      for (let i = 0; i < d.time.length; i++) {
+        if (d.time[i] < today) continue;
+        c.days[d.time[i]] = { max: d.temperature_2m_max[i], min: d.temperature_2m_min[i], code: d.weather_code[i], rain: d.precipitation_sum[i] };
+      }
+      const cu = j.current || {};
+      c.current = { temp: cu.temperature_2m, feels: cu.apparent_temperature, hum: cu.relative_humidity_2m, code: cu.weather_code, wind: cu.wind_speed_10m, isDay: cu.is_day !== 0 };
       c.forecast = {};
       for (const [k, v] of Object.entries(all)) {
         if (k < today) c.history[k] = v; else c.forecast[k] = v;
@@ -69,9 +80,9 @@ export async function getWeather(lat, lon, { force = false } = {}) {
     saveCache(c);
   } catch (e) {
     console.warn('Pogoda niedostępna, używam bufora', e);
-    if (!c.forecast && !c.climatology) return { history: c.history || {}, forecast: {}, climatology: {}, updatedAt: null, error: e.message };
+    if (!c.forecast && !c.climatology) return { history: c.history || {}, forecast: {}, climatology: {}, current: null, days: {}, updatedAt: null, error: e.message };
   }
-  return { history: c.history, forecast: c.forecast || {}, climatology: c.climatology || {}, updatedAt: c.fcAt || null };
+  return { history: c.history, forecast: c.forecast || {}, climatology: c.climatology || {}, current: c.current || null, days: c.days || {}, updatedAt: c.fcAt || null };
 }
 
 /** Szukanie miejscowości. */
@@ -82,6 +93,23 @@ export async function geocode(name) {
     lat: Math.round(r.latitude * 1000) / 1000,
     lon: Math.round(r.longitude * 1000) / 1000,
   }));
+}
+
+/** Kod pogody WMO → [ikona, opis]. */
+export function weatherInfo(code, isDay = true) {
+  const c = Number(code);
+  if (c === 0) return [isDay ? '☀️' : '🌙', 'bezchmurnie'];
+  if (c === 1) return [isDay ? '🌤️' : '🌙', 'przeważnie pogodnie'];
+  if (c === 2) return ['⛅', 'częściowe zachmurzenie'];
+  if (c === 3) return ['☁️', 'pochmurno'];
+  if (c === 45 || c === 48) return ['🌫️', 'mgła'];
+  if (c >= 51 && c <= 57) return ['🌦️', 'mżawka'];
+  if (c >= 61 && c <= 67) return ['🌧️', 'deszcz'];
+  if (c >= 71 && c <= 77) return ['🌨️', 'śnieg'];
+  if (c >= 80 && c <= 82) return ['🌦️', 'przelotny deszcz'];
+  if (c === 85 || c === 86) return ['🌨️', 'przelotny śnieg'];
+  if (c >= 95) return ['⛈️', 'burza'];
+  return ['🌡️', ''];
 }
 
 /** Temperatura dla dnia: prognoza → historia → klimatologia. */
