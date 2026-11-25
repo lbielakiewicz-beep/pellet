@@ -1,6 +1,6 @@
 // Service worker: aplikacja działa bez internetu.
 // Po każdej zmianie plików aplikacji zwiększ numer wersji.
-const VERSION = 'pellet-v1';
+const VERSION = 'pellet-v2';
 const ASSETS = [
   './',
   './index.html',

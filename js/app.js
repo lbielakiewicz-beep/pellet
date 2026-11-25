@@ -37,6 +37,12 @@ const bags = kg => {
   return `${nf(b, 1)} ${wordBags(b)}`;
 };
 const wordDays = n => (n === 1 ? 'dzień' : 'dni');
+function wordPallets(n) {
+  if (!Number.isInteger(n)) return 'palety';
+  if (n === 1) return 'paleta';
+  const d = n % 10, h = n % 100;
+  return d >= 2 && d <= 4 && !(h >= 12 && h <= 14) ? 'palety' : 'palet';
+}
 
 function persist() { S.save(data); render(); }
 
@@ -187,10 +193,11 @@ function purchaseForm(existing) {
     intro: data.suppliers.length ? '' : '<p class="muted">Dostawców dodasz w zakładce „Dostawcy”.</p>',
     fields: [
       { name: 'date', label: 'Data dostawy', type: 'date', value: e.date || F.ymd(Date.now()), required: true },
-      { name: 'qty', label: 'Ilość', type: 'number', value: e.qty ?? '', required: true, half: true, autofocus: !existing },
-      { name: 'unit', label: 'Jednostka', type: 'select', value: e.unit || 't', half: true, options: [{ value: 't', label: 'tony' }, { value: 'bags', label: 'worki' }, { value: 'kg', label: 'kg' }] },
-      { name: 'price', label: 'Cena', type: 'number', value: e.priceInput ?? '', half: true },
-      { name: 'priceMode', label: 'Cena za', type: 'select', value: e.priceMode || 'perT', half: true, options: [{ value: 'perT', label: 'tonę' }, { value: 'total', label: 'całość' }, { value: 'perBag', label: 'worek' }] },
+      { name: 'qty', label: 'Ilość', type: 'number', value: e.qty ?? (existing ? '' : 1), required: true, half: true, autofocus: !existing },
+      { name: 'unit', label: 'Jednostka', type: 'select', value: e.unit || 'pallets', half: true, options: [{ value: 'pallets', label: 'palety' }, { value: 't', label: 'tony' }, { value: 'bags', label: 'worki' }, { value: 'kg', label: 'kg' }] },
+      { name: 'price', label: 'Cena (zł)', type: 'number', value: e.priceInput ?? '', half: true },
+      { name: 'priceMode', label: 'Cena za', type: 'select', value: e.priceMode || 'perPallet', half: true, options: [{ value: 'perPallet', label: 'paletę' }, { value: 'perT', label: 'tonę' }, { value: 'total', label: 'całość' }, { value: 'perBag', label: 'worek' }] },
+      { name: 'palletBags', label: 'Worków na palecie', type: 'number', value: e.palletBags ?? data.settings.palletBags, hint: 'dotyczy jednostki i ceny „paleta”' },
       { name: 'transport', label: 'Transport (zł)', type: 'number', value: e.transport ?? '', placeholder: '0' },
       { name: 'supplierId', label: 'Dostawca', type: 'select', value: e.supplierId || '', options: sOpts },
       { name: 'grade', label: 'Rodzaj / certyfikat', value: e.grade || '', placeholder: 'np. ENplus A1, 6 mm' },
@@ -200,14 +207,20 @@ function purchaseForm(existing) {
       const qty = num(v.qty);
       if (!(qty > 0)) return 'Podaj ilość.';
       const bagKg = data.settings.bagKg;
-      const kg = v.unit === 't' ? qty * 1000 : v.unit === 'bags' ? qty * bagKg : qty;
+      const usesPallet = v.unit === 'pallets' || v.priceMode === 'perPallet';
+      const palletBags = num(v.palletBags);
+      if (usesPallet && !(palletBags > 0)) return 'Podaj liczbę worków na palecie.';
+      const palletKg = palletBags * bagKg;
+      const kg = { pallets: qty * palletKg, t: qty * 1000, bags: qty * bagKg, kg: qty }[v.unit];
       const price = v.price === '' ? 0 : num(v.price);
       if (!(price >= 0)) return 'Cena ma zły format.';
-      const goodsPrice = v.priceMode === 'perT' ? price * kg / 1000 : v.priceMode === 'perBag' ? price * kg / bagKg : price;
+      const goodsPrice = { perPallet: price * kg / palletKg, perT: price * kg / 1000, perBag: price * kg / bagKg, total: price }[v.priceMode];
       const transport = v.transport === '' ? 0 : num(v.transport);
       if (!(transport >= 0)) return 'Koszt transportu ma zły format.';
+      if (usesPallet) data.settings.palletBags = palletBags; // zapamiętaj na następny raz
       const rec = {
         date: v.date, qty, unit: v.unit, kg, priceInput: price, priceMode: v.priceMode,
+        palletBags: usesPallet ? palletBags : null,
         goodsPrice: Math.round(goodsPrice * 100) / 100, transport, supplierId: v.supplierId || null,
         grade: v.grade.trim(), note: v.note.trim(),
       };
@@ -458,7 +471,7 @@ function viewPurchases() {
       const total = (p.goodsPrice || 0) + (p.transport || 0);
       return `<button class="card item" data-edit-purchase="${p.id}">
         <div class="irow"><b>${fmtDate(F.parseYmd(p.date))}</b><b>${total ? money(total) : ''}</b></div>
-        <div class="irow"><span>${nf(p.kg / 1000, 2)} t · ${bags(p.kg)}</span><span class="muted">${ppk ? `${money(ppk * 1000)}/t` : 'bez ceny'}</span></div>
+        <div class="irow"><span>${p.unit === 'pallets' ? `${nf(p.qty, 2)} ${wordPallets(p.qty)} · ` : ''}${bags(p.kg)} · ${nf(p.kg / 1000, 2)} t</span><span class="muted">${p.priceMode === 'perPallet' && p.priceInput ? `${money(p.priceInput)}/paleta` : ppk ? `${money(ppk * 1000)}/t` : 'bez ceny'}</span></div>
         <div class="irow muted small"><span>${esc(supplierName(p.supplierId) || 'dostawca nieznany')}${p.grade ? ` · ${esc(p.grade)}` : ''}</span><span>${p.transport ? `w tym transport ${money(p.transport)}` : ''}</span></div>
         ${p.note ? `<div class="muted small">${esc(p.note)}</div>` : ''}
       </button>`;
@@ -537,6 +550,7 @@ function viewMore() {
       <h3>Ustawienia</h3>
       <form id="settings" class="fields">
         ${fieldHtml({ name: 'bagKg', label: 'Waga worka (kg)', type: 'number', value: s.bagKg, half: true })}
+        ${fieldHtml({ name: 'palletBags', label: 'Worków na palecie', type: 'number', value: s.palletBags, half: true })}
         ${fieldHtml({ name: 'leadDays', label: 'Czas dostawy (dni)', type: 'number', value: s.leadDays, half: true })}
         ${fieldHtml({ name: 'safetyDays', label: 'Zapas bezpieczeństwa (dni)', type: 'number', value: s.safetyDays, half: true })}
         ${fieldHtml({ name: 'baseTemp', label: 'Temp. bazowa (°C)', type: 'number', value: s.baseTemp, half: true, hint: 'powyżej niej dom nie potrzebuje grzania' })}
@@ -679,6 +693,7 @@ document.addEventListener('submit', async e => {
     const pos = (x, def) => (num(x) > 0 ? num(x) : def);
     const nn = (x, def) => (num(x) >= 0 ? num(x) : def);
     s.bagKg = pos(v.bagKg, s.bagKg);
+    s.palletBags = pos(v.palletBags, s.palletBags);
     s.leadDays = nn(v.leadDays, s.leadDays);
     s.safetyDays = nn(v.safetyDays, s.safetyDays);
     s.baseTemp = Number.isFinite(num(v.baseTemp)) ? num(v.baseTemp) : s.baseTemp;

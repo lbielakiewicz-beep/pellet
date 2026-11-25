@@ -4,6 +4,7 @@ const KEY = 'pellet-data-v1';
 
 export const DEFAULT_SETTINGS = {
   bagKg: 15,
+  palletBags: 65,
   baseTemp: 18,
   leadDays: 3,
   safetyDays: 7,
