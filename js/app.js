@@ -80,13 +80,13 @@ function safeRender() {
 document.addEventListener('focusout', () => setTimeout(() => { if (renderLater) { renderLater = false; safeRender(); } }, 300));
 $('#dlg').addEventListener('close', () => { if (renderLater) { renderLater = false; safeRender(); } });
 
-function toast(msg, undo) {
+function toast(msg, undo, ms) {
   const el = $('#toast');
   el.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button type="button">Cofnij</button>' : ''}`;
   el.hidden = false;
   clearTimeout(toast.t);
   if (undo) el.querySelector('button').onclick = () => { undo(); el.hidden = true; };
-  toast.t = setTimeout(() => (el.hidden = true), undo ? 6000 : 3000);
+  toast.t = setTimeout(() => (el.hidden = true), ms || (undo ? 6000 : 3000));
 }
 
 const ICON = {
@@ -439,6 +439,33 @@ function stateIcon(state) {
     off: ['pause', 'off'], power: ['power', 'off'], alarm: ['alarm', 'alarm'], clean: ['clean', 'clean'],
   }[P.stateKind(state).kind] || ['unknown', 'off'];
   return { svg: PIEC_ICON[ic], cls };
+}
+
+const fmtDur = ms => {
+  const m = Math.max(1, Math.round(ms / 60e3));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
+};
+const fmtWhen = t => `${fmtDay(t).toLowerCase()}, ${fmtTime(t)}`;
+
+/** Opis po dotknięciu ikony stanu: od kiedy pracuje albo kiedy było ostatnie uruchomienie. */
+function stateDetails() {
+  const { status: p, rows } = P.piec();
+  if (!p) return '';
+  // bieżący odczyt może być nowszy niż historia
+  const last = rows.reduce((a, r) => Math.max(a, r[0]), 0);
+  const all = p.ts > last ? [...rows, [p.ts, p.fuelPct, p.tempOut, p.tempCO, p.feeder ? 1 : 0, p.state]] : rows;
+  const cycles = P.burnerCycles(all);
+  const cur = cycles[cycles.length - 1];
+  const on = P.stateKind(p.state).on;
+  let info = '';
+  if (on === true) {
+    info = cur && cur.end == null ? `pracuje od ${fmtWhen(cur.start)} (${fmtDur(p.ts - cur.start)})` : 'pracuje – początku nie ma jeszcze w historii';
+  } else if (cur) {
+    const done = cycles.filter(c => c.end != null).pop();
+    if (done) info = `ostatnio pracował ${fmtWhen(done.start)} – ${fmtTime(done.end)} (${fmtDur(done.end - done.start)}), nie pracuje od ${fmtDur(p.ts - done.end)}`;
+  }
+  if (!info && on !== null) info = 'brak uruchomień w historii (ostatnie 30 dni)';
+  return `Stan pieca: ${p.state}${info ? ` · ${info}` : ''}`;
 }
 
 function piecPanel() {
@@ -1071,7 +1098,7 @@ document.addEventListener('click', async e => {
       try { await C.signIn(); } catch (err) { if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') toast(`Logowanie nieudane: ${C.authError(err)}`); }
       return;
     case 'notif': return notifDialog();
-    case 'stateInfo': return toast(`Stan pieca: ${d.state}`);
+    case 'stateInfo': return toast(stateDetails(), null, 7000);
     case 'refillAdd':
       if ($('#dlg').open) $('#dlg').close();
       return fillForm(null, { ts: Number(d.ts), bags: d.bags ? Number(d.bags) : 1, note: 'wykryte przez piec' });
