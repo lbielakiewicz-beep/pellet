@@ -410,24 +410,25 @@ function drawBarChart(el, items, fmtVal) {
 const DOW = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
 const tC = v => (v == null || !Number.isFinite(+v) ? '—' : `${nf(Math.round(v))}°`);
 
+// piec liczy poziom od ostatniego „napełniono do pełna” – częściowe dosypania doliczamy sami
+function hopperLevel(p) {
+  const cap = P.hopperBags(data.settings, data.fills);
+  const part = p.fuelPct == null ? { bags: 0 } : P.partialFills(data.fills);
+  const pct = p.fuelPct == null ? null : cap && part.bags ? Math.min(100, p.fuelPct + (part.bags / cap.bags) * 100) : p.fuelPct;
+  return { cap, part, pct };
+}
+
 function piecPanel() {
   if (!P.piecConfigured() || !C.signedIn()) return '';
   const { status: p, error } = P.piec();
-  let refills = '';
-  for (const r of P.pendingRefills(data.settings, data.fills)) {
-    refills += `<div class="status info">${ICON.warn}<span>Piec wykrył dosypanie: <b>${fmtDay(r.ts).toLowerCase()}, ${fmtTime(r.ts)}</b> (${nf(r.from)}% → ${nf(r.to)}%)${r.bags ? `, ok. <b>${nf(r.bags)} ${wordBags(r.bags)}</b>` : ''}.
-      <span class="row-btns"><button class="btn primary" data-act="refillAdd" data-ts="${r.ts}" data-bags="${r.bags ?? ''}">Dodaj wpis</button><button class="btn ghost" data-act="refillNo" data-ts="${r.ts}">To nie dosypanie</button></span></span></div>`;
-  }
-  const unc = P.unconfirmedFill(data.fills);
-  if (unc) refills += `<div class="status warn">${ICON.warn}<span>Dosypano ${nf(unc.bags, 1)} ${wordBags(unc.bags)} (${fmtTime(unc.ts)}), ale poziom w piecu nie wzrósł. <b>Potwierdź zasypanie na panelu pieca</b>, inaczej piec zaniża zapas paliwa.</span></div>`;
-  if (!p) return refills + (error ? `<p class="form-err small">Piec: ${esc(error)}</p>` : '');
-  const pct = p.fuelPct;
-  const cap = P.hopperBags(data.settings, data.fills);
+  if (!p) return error ? `<p class="form-err small">Piec: ${esc(error)}</p>` : '';
+  const { cap, part, pct } = hopperLevel(p);
+  const partNote = part.bags ? `<p class="muted small hopper-note">piec: ${nf(p.fuelPct)}% + ${nf(part.bags, 1)} ${wordBags(part.bags)} dosypane od ostatniego napełnienia do pełna</p>` : '';
   const level = pct == null ? '' : `<div class="hopper"><div class="hopper-bar"><div style="width:${Math.max(0, Math.min(100, pct))}%" class="${pct <= 15 ? 'low' : pct <= 30 ? 'mid' : ''}"></div></div>
-      <div class="hopper-txt"><b>${nf(pct)}%</b>${cap ? ` <span class="muted">≈ ${nf((pct / 100) * cap.bags, 1)} ${wordBags((pct / 100) * cap.bags)}${cap.estimated ? ' (szac.)' : ''}</span>` : ''}</div></div>`;
+      <div class="hopper-txt"><b>${part.bags && cap ? '≈ ' : ''}${nf(pct)}%</b>${cap ? ` <span class="muted">≈ ${nf((pct / 100) * cap.bags, 1)} ${wordBags((pct / 100) * cap.bags)}${cap.estimated ? ' (szac.)' : ''}</span>` : ''}</div></div>${partNote}`;
   const t = (l, v) => (v == null ? '' : `<div><span class="muted small">${l}</span><b>${nf(v, 1)}°</b></div>`);
   const age = Date.now() - p.ts;
-  return `${refills}<section class="card piec">
+  return `<section class="card piec">
     <div class="piec-head"><span class="label">Zasobnik pieca</span><span class="muted small">${p.online ? '' : 'piec offline · '}odczyt ${age > DAY ? fmtShort(p.ts) + ' ' : ''}${fmtTime(p.ts)}</span></div>
     ${level}
     <div class="piec-grid">
@@ -435,9 +436,89 @@ function piecPanel() {
       ${t('Kocioł (CO)', p.tempCO)}${t('Woda (CWU)', p.tempCWU)}${t('Spaliny', p.tempFlue)}${t('Na zewnątrz', p.tempOut)}
       ${p.feeder != null ? `<div><span class="muted small">Podajnik</span><b>${p.feeder ? 'pracuje' : 'stoi'}</b></div>` : ''}
     </div>
+    ${burnerLine()}
     ${error ? `<p class="form-err small">${esc(error)}</p>` : ''}
   </section>`;
 }
+
+function burnerLine() {
+  const b = P.burnerStats();
+  if (!b) return '';
+  const dur = m => (m >= 90 ? `${nf(m / 60, 1)} h` : `${Math.round(m)} min`);
+  const parts = [`<b>${b.today}</b> dziś`];
+  if (b.perDay != null) parts.push(`śr. <b>${nf(b.perDay, 1)}</b>/dobę (${b.days} ${b.days === 1 ? 'dzień' : 'dni'})`);
+  if (b.avgCycleMin != null) parts.push(`cykl ok. <b>${dur(b.avgCycleMin)}</b>`);
+  return `<p class="small piec-starts"><span class="muted">Uruchomienia:</span> ${parts.join(' · ')}</p>`;
+}
+
+// ---------- powiadomienia (dzwonek na górnym pasku) ----------
+const SEEN_KEY = 'pellet-notif-seen';
+const RANK = { crit: 3, warn: 2, info: 1 };
+
+/** Aktualne powiadomienia: { id, level, html, ts? }. id zmienia się, gdy sprawa jest nowa. */
+function notifications() {
+  const out = [];
+  const pc = P.piecConfigured() && C.signedIn();
+  if (pc) {
+    for (const r of P.pendingRefills(data.settings, data.fills)) {
+      out.push({ id: `refill:${r.ts}`, level: 'info', ts: r.ts, html: `Piec wykrył napełnienie zasobnika: <b>${fmtDay(r.ts).toLowerCase()}, ${fmtTime(r.ts)}</b> (${nf(r.from)}% → ${nf(r.to)}%)${r.bags ? `, ok. <b>${nf(r.bags)} ${wordBags(r.bags)}</b>` : ''}. Nie ma tego we wpisach.
+        <span class="row-btns"><button class="btn primary" data-act="refillAdd" data-ts="${r.ts}" data-bags="${r.bags ?? ''}">Dodaj wpis</button><button class="btn ghost" data-act="refillNo" data-ts="${r.ts}">To nie dosypanie</button></span>` });
+    }
+    const unc = P.unconfirmedFill(data.fills);
+    if (unc) out.push({ id: `unc:${unc.id}`, level: 'info', ts: unc.ts, html: `Dosypano ${nf(unc.bags, 1)} ${wordBags(unc.bags)} (${fmtTime(unc.ts)}), a piec tego nie widzi. Jeśli zasobnik jest <b>pełny</b>, zaznacz napełnienie na panelu pieca. Jeśli nie – nic nie zaznaczaj, aplikacja doliczy te worki do poziomu z pieca.` });
+    const p = P.piec().status;
+    if (p) {
+      const { pct } = hopperLevel(p);
+      if (pct != null && pct <= 15) out.push({ id: `hopper:${F.ymd(Date.now())}`, level: pct <= 5 ? 'crit' : 'warn', ts: p.ts, html: `W zasobniku pieca zostało ok. <b>${nf(pct)}%</b> – czas dosypać.` });
+      if (p.state === 'Alarm') out.push({ id: `alarm:${F.ymd(p.ts)}`, level: 'crit', ts: p.ts, html: '<b>Piec zgłasza alarm.</b> Sprawdź panel sterownika.' });
+      if (!p.online) out.push({ id: `offline:${F.ymd(Date.now())}`, level: 'warn', ts: p.ts, html: `Sterownik pieca jest offline (ostatni odczyt ${fmtShort(p.ts)} ${fmtTime(p.ts)}).` });
+    }
+  }
+  const empty = !data.fills.length && !data.purchases.length && !data.inventories.length;
+  if (!empty) {
+    const c = compute();
+    if (c.stock <= 0) out.push({ id: 'empty', level: 'crit', html: 'Magazyn pusty – dodaj zakup albo zrób spis z natury.' });
+    else if (c.orderBy) {
+      const left = (c.orderBy - c.now) / DAY;
+      if (left <= 0) out.push({ id: 'order:now', level: 'crit', html: '<b>Zamów pellet teraz.</b> Przy obecnym zużyciu zapas skończy się przed dostawą.' });
+      else if (left <= 14) out.push({ id: `order:${F.ymd(c.orderBy)}`, level: 'warn', html: `Zamów pellet najpóźniej <b>${fmtDate(c.orderBy)}</b> (za ${nf(Math.floor(left))} ${wordDays(Math.floor(left))}).` });
+    }
+    const s = data.settings;
+    if (!C.signedIn() && (!s.lastBackup || Date.now() - s.lastBackup > 30 * DAY)) out.push({ id: `backup:${s.lastBackup || 0}`, level: 'info', html: 'Dane są tylko na tym telefonie. <a href="#wiecej">Zrób kopię zapasową</a> w zakładce Więcej.' });
+  }
+  return out.sort((a, b) => RANK[b.level] - RANK[a.level] || (b.ts || 0) - (a.ts || 0));
+}
+
+function seenIds() { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY)) || []); } catch { return new Set(); } }
+
+function updateBell(list = notifications()) {
+  const badge = $('#bell .badge');
+  const seen = seenIds();
+  const unseen = list.filter(n => !seen.has(n.id));
+  badge.hidden = !list.length;
+  badge.textContent = list.length > 9 ? '9+' : String(list.length);
+  const top = list[0]?.level;
+  badge.className = `badge ${unseen.length ? 'new' : ''} ${top === 'crit' ? 'crit' : ''}`;
+  $('#bell').setAttribute('aria-label', list.length ? `Powiadomienia: ${list.length}${unseen.length ? `, nowe: ${unseen.length}` : ''}` : 'Powiadomienia');
+}
+
+function notifDialog() {
+  const dlg = $('#dlg'), form = $('#dlgForm');
+  const list = notifications();
+  form.innerHTML = `<h2>Powiadomienia</h2>
+    <div class="notif-list">${list.length
+      ? list.map(n => `<div class="status ${n.level}">${ICON[n.level === 'info' ? 'warn' : n.level]}<span>${n.html}</span></div>`).join('')
+      : `<p class="muted">${ICON.ok} Nic nowego – wszystko w porządku.</p>`}</div>
+    <div class="dlg-actions"><span class="sp"></span><button type="button" class="btn primary" data-act="cancel" autofocus>Zamknij</button></div>`;
+  form.dataset.view = 'notif';
+  form.onsubmit = e => e.preventDefault();
+  form.querySelector('[data-act=cancel]').onclick = () => dlg.close();
+  form.querySelectorAll('a[href^="#"]').forEach(a => (a.onclick = () => dlg.close()));
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(list.map(n => n.id))); } catch { /* brak pamięci */ }
+  updateBell(list);
+  if (!dlg.open) dlg.showModal();
+}
+$('#dlg').addEventListener('close', () => { delete $('#dlgForm').dataset.view; });
 
 async function refreshPiec() {
   if (!P.piecConfigured() || !C.signedIn()) return;
@@ -774,6 +855,7 @@ function render() {
   document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${tab}`));
   $('#view').innerHTML = fn();
   drawCharts();
+  updateBell();
 }
 
 function drawCharts() {
@@ -851,11 +933,15 @@ document.addEventListener('click', async e => {
     case 'login':
       try { await C.signIn(); } catch (err) { if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') toast(`Logowanie nieudane: ${C.authError(err)}`); }
       return;
+    case 'notif': return notifDialog();
     case 'refillAdd':
+      if ($('#dlg').open) $('#dlg').close();
       return fillForm(null, { ts: Number(d.ts), bags: d.bags ? Number(d.bags) : 1, note: 'wykryte przez piec' });
     case 'refillNo':
       data.settings.dismissedRefills = [...(data.settings.dismissedRefills || []).slice(-50), Number(d.ts)];
-      return persist();
+      persist();
+      if ($('#dlgForm').dataset.view === 'notif') notifDialog();
+      return;
     case 'signup': case 'resetPass': {
       const f = $('#authForm');
       const email = f.elements.email.value.trim(), pass = f.elements.pass.value;

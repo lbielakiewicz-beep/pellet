@@ -1,7 +1,7 @@
 // Cloudflare Worker: pośrednik między aplikacją Pellet a eModul (TECH / Defro).
 // - GET /status   – aktualny stan pieca (na żywo z eModul)
-// - GET /history?days=30 – odczyty zapisywane co 15 min (zasobnik, temperatury)
-// - cron (np. */15 * * * *) – zapis odczytu do KV
+// - GET /history?days=30 – odczyty zapisywane co 5 min (zasobnik, temperatury, stan – do liczenia uruchomień)
+// - cron (*/5 * * * *) – zapis odczytu do KV (288 zapisów/dobę, w limicie darmowego KV)
 // Dostęp tylko dla zalogowanych użytkowników aplikacji (token Firebase) z listy ALLOWED_EMAILS.
 //
 // Zmienne (Settings → Variables and Secrets):
@@ -174,7 +174,7 @@ async function saveReading(env, s) {
   const key = `r:${day(s.ts)}`;
   const arr = (await env.KV.get(key, 'json')) || [];
   const last = arr[arr.length - 1];
-  if (last && s.ts - last[0] < 5 * 60e3) return; // nie częściej niż co 5 min
+  if (last && s.ts - last[0] < 4 * 60e3) return; // nie częściej niż co ~5 min (zapas na opóźnienia crona)
   arr.push([s.ts, s.fuelPct, s.tempOut, s.tempCO, s.feeder ? 1 : 0, s.state]);
   await env.KV.put(key, JSON.stringify(arr), { expirationTtl: KEEP_DAYS * 86400 });
 }

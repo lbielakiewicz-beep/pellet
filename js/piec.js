@@ -56,17 +56,41 @@ export function levelJumps(rows = st.rows) {
 
 const matchFill = (j, fills) => fills.find(f => f.ts >= j.start - MATCH_WINDOW && f.ts <= j.ts + MATCH_WINDOW);
 
-/** Pojemność zasobnika w workach: z ustawień albo wyliczona z dosypań wpisanych ręcznie. */
+// Na panelu pieca można zaznaczyć tylko „napełniono do pełna” – wtedy poziom wraca do 100%,
+// a potem piec odlicza spalone paliwo z pracy podajnika. Dosypań częściowych piec nie widzi.
+const nearJump = (f, jumps) => jumps.some(j => f.ts >= j.start - MATCH_WINDOW && f.ts <= j.ts + MATCH_WINDOW);
+
+/** Ręczne dosypania bez napełnienia do pełna w przedziale (from, to] – piec ich nie wliczył. */
+function partialBetween(fills, jumps, from, to) {
+  return fills.filter(f => f.ts > from && f.ts <= to && !nearJump(f, jumps));
+}
+
+/** Worki dosypane od ostatniego „napełniono do pełna” na panelu – do doliczenia do poziomu z pieca. */
+export function partialFills(fills, rows = st.rows) {
+  const jumps = levelJumps(rows);
+  const first = rows.length ? Math.min(...rows.map(r => r[0])) : Infinity;
+  const since = Math.max(first, jumps.length ? jumps[jumps.length - 1].ts : -Infinity);
+  const list = partialBetween(fills, jumps, since, Date.now());
+  return { bags: list.reduce((s, f) => s + (f.bags || 0), 0), list };
+}
+
+/** Pojemność zasobnika w workach: z ustawień albo wyliczona z dosypań do pełna wpisanych ręcznie. */
 export function hopperBags(settings, fills, rows = st.rows) {
   if (settings.hopperBags > 0) return { bags: settings.hopperBags, estimated: false };
-  const ratios = levelJumps(rows)
-    .map(j => { const f = matchFill(j, fills); return f ? f.bags / ((j.to - j.from) / 100) : null; })
+  const jumps = levelJumps(rows);
+  const ratios = jumps
+    .map((j, i) => {
+      // częściowe dosypania przed tym napełnieniem zaniżyły poziom „przed” – taki skok nie nadaje się do wyliczenia
+      if (i > 0 && partialBetween(fills, jumps, jumps[i - 1].ts, j.start).length) return null;
+      const f = matchFill(j, fills);
+      return f ? f.bags / ((j.to - j.from) / 100) : null;
+    })
     .filter(x => x > 0).sort((a, b) => a - b);
   if (!ratios.length) return null;
   return { bags: Math.round(ratios[Math.floor(ratios.length / 2)] * 10) / 10, estimated: true };
 }
 
-/** Ostatnie ręczne dosypanie (do 24 h), po którym poziom w piecu nie wzrósł – zapewne niepotwierdzone na panelu. */
+/** Ostatnie ręczne dosypanie (do 24 h), po którym poziom w piecu nie wzrósł – częściowe albo niezaznaczone na panelu. */
 export function unconfirmedFill(fills, rows = st.rows) {
   const now = Date.now();
   const f = fills.filter(x => x.ts <= now - HOUR && x.ts >= now - 24 * HOUR).sort((a, b) => b.ts - a.ts)[0];
@@ -82,4 +106,50 @@ export function pendingRefills(settings, fills) {
   return levelJumps()
     .filter(j => j.ts >= Date.now() - LOOKBACK && !dismissed.has(j.ts) && !matchFill(j, fills))
     .map(j => ({ ...j, bags: cap ? Math.max(1, Math.round(((j.to - j.from) / 100) * cap.bags)) : null }));
+}
+
+// ---------- uruchomienia palnika ----------
+// Stany „pracuje” i „nie pracuje”; pozostałe (Alarm, Czyszczenie, nieznane) nie zmieniają oceny.
+const ON = new Set(['Rozpalanie', 'Stabilizacja', 'Praca', 'Podtrzymanie']);
+const OFF = new Set(['Wygaszanie', 'Wygaszony', 'Postój', 'Nadzór', 'Wyłączony']);
+
+/** Cykle pracy z historii stanów: [{ start, end }] – start = przejście z postoju do pracy (lub nowe rozpalanie). */
+export function burnerCycles(rows = st.rows) {
+  const pts = rows.filter(r => r[5]).sort((a, b) => a[0] - b[0]);
+  const cycles = [];
+  let on = null, prevState = null;
+  for (const [ts, , , , , state] of pts) {
+    const isOn = ON.has(state) ? true : OFF.has(state) ? false : null;
+    if (isOn === true) {
+      const restart = state === 'Rozpalanie' && prevState !== 'Rozpalanie' && on === true;
+      if (on === false || restart) {
+        if (restart && cycles.length && cycles[cycles.length - 1].end == null) cycles[cycles.length - 1].end = ts;
+        cycles.push({ start: ts, end: null });
+      }
+    } else if (isOn === false && on === true && cycles.length && cycles[cycles.length - 1].end == null) {
+      cycles[cycles.length - 1].end = ts;
+    }
+    if (isOn != null) on = isOn;
+    prevState = state;
+  }
+  return cycles;
+}
+
+/** Statystyki uruchomień: dziś, średnio na dobę (do 7 dni wstecz) i średni czas cyklu. */
+export function burnerStats(rows = st.rows) {
+  const withState = rows.filter(r => r[5]);
+  if (withState.length < 2) return null;
+  const now = Date.now();
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const first = Math.min(...withState.map(r => r[0]));
+  const cycles = burnerCycles(rows);
+  const span = Math.min(7 * 24 * HOUR, now - first);
+  const inSpan = cycles.filter(c => c.start >= now - span);
+  const done = inSpan.filter(c => c.end != null);
+  return {
+    today: cycles.filter(c => c.start >= midnight.getTime()).length,
+    perDay: span >= 24 * HOUR ? inSpan.length / (span / (24 * HOUR)) : null,
+    days: Math.round(span / (24 * HOUR)),
+    avgCycleMin: done.length ? done.reduce((s, c) => s + (c.end - c.start), 0) / done.length / 60e3 : null,
+  };
 }
