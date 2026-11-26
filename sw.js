@@ -1,6 +1,6 @@
 // Service worker: aplikacja działa bez internetu.
 // Po każdej zmianie plików aplikacji zwiększ numer wersji.
-const VERSION = 'pellet-v19';
+const VERSION = 'pellet-v20';
 const SDK_CACHE = 'firebase-sdk'; // nie kasujemy przy aktualizacji aplikacji
 const ASSETS = [
   './',

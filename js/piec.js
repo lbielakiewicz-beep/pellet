@@ -113,7 +113,7 @@ export function pendingRefills(settings, fills) {
 // Rozpoznajemy po początku nazwy – sterowniki dopisują warianty, np. „Praca PID”.
 const KINDS = [
   [/^rozpal/i, 'ignite', true], [/^(praca|stabiliz)/i, 'on', true], [/^podtrzym/i, 'low', true],
-  [/^wygaszanie/i, 'fade', false], [/^(wygaszon|postój|nadzór)/i, 'off', false], [/^wyłącz/i, 'power', false],
+  [/^wygaszanie/i, 'fade', false], [/^(wygaszon|postój|nadzór|czuwa)/i, 'off', false], [/^wyłącz/i, 'power', false],
   [/alarm/i, 'alarm', null], [/^(czyszcz|kalibr)/i, 'clean', null],
 ];
 
