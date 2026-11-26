@@ -418,6 +418,31 @@ function hopperLevel(p) {
   return { cap, part, pct };
 }
 
+const svgIc = d => `<svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
+const FLAME = '<path d="M12 3c1 4 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-3.5 2.5-5 .5 1.5 1.5 2 2 2C11 7.5 11.5 5 12 3z"/>';
+const PIEC_ICON = {
+  flame: svgIc(FLAME),
+  pause: svgIc('<circle cx="12" cy="12" r="9"/><path d="M10 9v6m4-6v6"/>'),
+  power: svgIc('<path d="M12 3v8M7 6.5a7 7 0 1 0 10 0"/>'),
+  clean: svgIc('<path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6"/>'),
+  alarm: svgIc('<circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3.5v.5"/>'),
+  unknown: svgIc('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.2m0 3v.5"/>'),
+  co: svgIc('<path d="M6 5v14m4-14v14m4-14v14m4-14v14M4 8h16M4 16h16"/>'),
+  cwu: svgIc('<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>'),
+  out: svgIc('<path d="M10 5a2 2 0 0 1 4 0v9.3a4 4 0 1 1-4 0z"/><path d="M12 11v6"/>'),
+};
+
+/** Ikona stanu sterownika: płomień = pali się, pauza = czeka, itd. */
+function stateIcon(state) {
+  const m = {
+    Rozpalanie: ['flame', 'ignite'], Stabilizacja: ['flame', 'on'], Praca: ['flame', 'on'],
+    Podtrzymanie: ['flame', 'low'], Wygaszanie: ['flame', 'fade'],
+    Wygaszony: ['pause', 'off'], 'Postój': ['pause', 'off'], 'Nadzór': ['pause', 'off'],
+    'Wyłączony': ['power', 'off'], Czyszczenie: ['clean', 'on'], Kalibracja: ['clean', 'on'], Alarm: ['alarm', 'alarm'],
+  }[state] || ['unknown', 'off'];
+  return { svg: PIEC_ICON[m[0]], cls: m[1] };
+}
+
 function piecPanel() {
   if (!P.piecConfigured() || !C.signedIn()) return '';
   const { status: p, error } = P.piec();
@@ -426,15 +451,15 @@ function piecPanel() {
   const partNote = part.bags ? `<p class="muted small hopper-note">piec: ${nf(p.fuelPct)}% + ${nf(part.bags, 1)} ${wordBags(part.bags)} dosypane od ostatniego napełnienia do pełna</p>` : '';
   const level = pct == null ? '' : `<div class="hopper"><div class="hopper-bar"><div style="width:${Math.max(0, Math.min(100, pct))}%" class="${pct <= 15 ? 'low' : pct <= 30 ? 'mid' : ''}"></div></div>
       <div class="hopper-txt"><b>${part.bags && cap ? '≈ ' : ''}${nf(pct)}%</b>${cap ? ` <span class="muted">≈ ${nf((pct / 100) * cap.bags, 1)} ${wordBags((pct / 100) * cap.bags)}${cap.estimated ? ' (szac.)' : ''}</span>` : ''}</div></div>${partNote}`;
-  const t = (l, v) => (v == null ? '' : `<div><span class="muted small">${l}</span><b>${nf(v, 1)}°</b></div>`);
+  const t = (ic, l, v) => (v == null ? '' : `<span class="piec-t" title="${l}" aria-label="${l}: ${nf(v, 1)}°">${PIEC_ICON[ic]}<b>${nf(v, 1)}°</b></span>`);
   const age = Date.now() - p.ts;
+  const st = p.state ? stateIcon(p.state) : null;
   return `<section class="card piec">
     <div class="piec-head"><span class="label">Zasobnik pieca</span><span class="muted small">${p.online ? '' : 'piec offline · '}odczyt ${age > DAY ? fmtShort(p.ts) + ' ' : ''}${fmtTime(p.ts)}</span></div>
     ${level}
-    <div class="piec-grid">
-      ${p.state ? `<div><span class="muted small">Stan</span><b>${esc(p.state)}</b></div>` : ''}
-      ${t('Kocioł (CO)', p.tempCO)}${t('Woda (CWU)', p.tempCWU)}${t('Spaliny', p.tempFlue)}${t('Na zewnątrz', p.tempOut)}
-      ${p.feeder != null ? `<div><span class="muted small">Podajnik</span><b>${p.feeder ? 'pracuje' : 'stoi'}</b></div>` : ''}
+    <div class="piec-row">
+      ${st ? `<button type="button" class="piec-state ${st.cls}" data-act="stateInfo" data-state="${esc(p.state)}" title="${esc(p.state)}" aria-label="Stan pieca: ${esc(p.state)}">${st.svg}</button>` : ''}
+      ${t('co', 'Kocioł (CO)', p.tempCO)}${t('cwu', 'Woda (CWU)', p.tempCWU)}${t('out', 'Na zewnątrz', p.tempOut)}
     </div>
     ${burnerLine()}
     ${error ? `<p class="form-err small">${esc(error)}</p>` : ''}
@@ -1048,6 +1073,7 @@ document.addEventListener('click', async e => {
       try { await C.signIn(); } catch (err) { if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') toast(`Logowanie nieudane: ${C.authError(err)}`); }
       return;
     case 'notif': return notifDialog();
+    case 'stateInfo': return toast(`Stan pieca: ${d.state}`);
     case 'refillAdd':
       if ($('#dlg').open) $('#dlg').close();
       return fillForm(null, { ts: Number(d.ts), bags: d.bags ? Number(d.bags) : 1, note: 'wykryte przez piec' });

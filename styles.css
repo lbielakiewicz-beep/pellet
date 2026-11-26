@@ -285,9 +285,18 @@ dialog h2 { margin: 0 0 12px; font-size: 19px; }
 .hopper-txt { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hopper-txt b { font-size: 20px; }
 .hopper-note { margin: -6px 0 10px; }
-.piec-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; }
-.piec-grid > div { display: flex; flex-direction: column; min-width: 0; }
-.piec-grid b { font-variant-numeric: tabular-nums; }
+.piec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.piec-t { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.piec-t .ic { width: 20px; height: 20px; color: var(--muted); }
+.piec-state { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--surface2); color: var(--muted); }
+.piec-state .ic { width: 24px; height: 24px; }
+.piec-state.on, .piec-state.ignite { background: var(--accent-soft); color: var(--accent); }
+.piec-state.low .ic { transform: scale(.75); } .piec-state.low { background: var(--accent-soft); color: var(--accent); }
+.piec-state.fade { color: var(--accent); opacity: .6; }
+.piec-state.alarm { background: var(--crit-bg); color: var(--crit); }
+.piec-state.ignite .ic { animation: ignite 1.2s ease-in-out infinite; }
+@keyframes ignite { 50% { transform: scale(.8); opacity: .6; } }
+@media (prefers-reduced-motion: reduce) { .piec-state.ignite .ic { animation: none; } }
 .piec-starts { margin: 10px 0 0; }
 .row-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .row-btns .btn { min-height: 38px; padding: 6px 12px; }
