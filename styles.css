@@ -290,13 +290,21 @@ dialog h2 { margin: 0 0 12px; font-size: 19px; }
 .piec-t .ic { width: 20px; height: 20px; color: var(--muted); }
 .piec-state { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; background: var(--surface2); color: var(--muted); }
 .piec-state .ic { width: 24px; height: 24px; }
-.piec-state.on, .piec-state.ignite { background: var(--accent-soft); color: var(--accent); }
-.piec-state.low .ic { transform: scale(.75); } .piec-state.low { background: var(--accent-soft); color: var(--accent); }
+.piec-state.on, .piec-state.ignite, .piec-state.low, .piec-state.clean { background: var(--accent-soft); color: var(--accent); }
 .piec-state.fade { color: var(--accent); opacity: .6; }
 .piec-state.alarm { background: var(--crit-bg); color: var(--crit); }
+/* animacje: płomień migocze przy pracy, pulsuje przy rozpalaniu, wiatraczek kręci się przy czyszczeniu */
+.piec-state .ic { transform-origin: 50% 85%; }
+.piec-state.on .ic { animation: flicker 1.6s ease-in-out infinite; }
+.piec-state.low .ic { transform: scale(.75); animation: flicker-low 2.4s ease-in-out infinite; }
 .piec-state.ignite .ic { animation: ignite 1.2s ease-in-out infinite; }
+.piec-state.clean .ic { transform-origin: 50% 50%; animation: spin 3s linear infinite; }
+.piec-state.alarm .ic { animation: ignite 1s ease-in-out infinite; transform-origin: 50% 50%; }
+@keyframes flicker { 0%, 100% { transform: scale(1) skewX(0); } 25% { transform: scale(1.06, .93) skewX(-5deg); } 50% { transform: scale(.95, 1.08) skewX(3deg); } 75% { transform: scale(1.03, .96) skewX(-2deg); } }
+@keyframes flicker-low { 0%, 100% { transform: scale(.75); } 50% { transform: scale(.71, .8) skewX(4deg); } }
 @keyframes ignite { 50% { transform: scale(.8); opacity: .6; } }
-@media (prefers-reduced-motion: reduce) { .piec-state.ignite .ic { animation: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .piec-state .ic { animation: none !important; } }
 .piec-starts { margin: 10px 0 0; }
 .row-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .row-btns .btn { min-height: 38px; padding: 6px 12px; }

@@ -436,7 +436,7 @@ const PIEC_ICON = {
 function stateIcon(state) {
   const [ic, cls] = {
     ignite: ['flame', 'ignite'], on: ['flame', 'on'], low: ['flame', 'low'], fade: ['flame', 'fade'],
-    off: ['pause', 'off'], power: ['power', 'off'], alarm: ['alarm', 'alarm'], clean: ['clean', 'on'],
+    off: ['pause', 'off'], power: ['power', 'off'], alarm: ['alarm', 'alarm'], clean: ['clean', 'clean'],
   }[P.stateKind(state).kind] || ['unknown', 'off'];
   return { svg: PIEC_ICON[ic], cls };
 }
