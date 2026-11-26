@@ -381,7 +381,7 @@ function drawBarChart(el, items, fmtVal) {
   const ymax = niceMax(Math.max(1, ...items.map(i => i.v)));
   const n = items.length, slot = (W - P.l - P.r) / n, bw = Math.max(4, slot - 4);
   const y = v => P.t + (1 - v / ymax) * (H - P.t - P.b);
-  const grid = [0, 0.5, 1].map(f => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(ymax * f)}" y2="${y(ymax * f)}" class="grid"/><text x="${P.l - 6}" y="${y(ymax * f) + 4}" class="axis" text-anchor="end">${nf(ymax * f)}</text>`).join('');
+  const grid = [0, 0.5, 1].map(f => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(ymax * f)}" y2="${y(ymax * f)}" class="grid"/><text x="${P.l - 6}" y="${y(ymax * f) + 4}" class="axis" text-anchor="end">${nf(ymax * f, ymax < 1 ? 2 : ymax < 10 ? 1 : 0)}</text>`).join('');
   const bars = items.map((it, i) => {
     const x0 = P.l + i * slot + (slot - bw) / 2, top = y(it.v), bot = y(0), h = bot - top;
     const r = Math.min(4, bw / 2, h);
@@ -395,7 +395,7 @@ function drawBarChart(el, items, fmtVal) {
     const show = () => {
       const i = +r.dataset.i, it = items[i];
       tip.hidden = false;
-      tip.innerHTML = `<b>${esc(it.full)}</b><br>${fmtVal(it.v)}`;
+      tip.innerHTML = `<b>${esc(it.full)}</b><br>${fmtVal(it.v, it)}`;
       const cx = P.l + i * slot + slot / 2;
       tip.style.left = `${Math.min(W - tip.offsetWidth - 4, Math.max(4, cx - tip.offsetWidth / 2))}px`;
       tip.style.top = `${Math.max(0, y(it.v) - tip.offsetHeight - 8)}px`;
@@ -715,16 +715,146 @@ function viewSuppliers() {
     }).join('') || '<p class="muted pad">Brak dostawców.</p>'}`;
 }
 
-function monthlyConsumption() {
+/** Ostatnie 12 miesięcy; value(fill) = ile dany wpis wnosi (domyślnie kg). */
+function monthlyConsumption(value = f => f.kg) {
   const now = new Date();
   const items = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const e = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    const v = data.fills.filter(f => f.ts >= d.getTime() && f.ts < e.getTime()).reduce((a, f) => a + f.kg, 0);
+    const v = data.fills.filter(f => f.ts >= d.getTime() && f.ts < e.getTime()).reduce((a, f) => a + value(f), 0);
     items.push({ v, label: d.toLocaleDateString('pl-PL', { month: 'short' }), full: d.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }) });
   }
   return items;
+}
+
+// ---------- statystyki ----------
+/** Cena za kg obowiązująca w danej chwili: z ostatniego zakupu przed nią (albo pierwszego w ogóle). */
+function priceLookup() {
+  const ps = data.purchases.filter(p => p.kg > 0 && p.goodsPrice > 0)
+    .map(p => ({ t: F.parseYmd(p.date).getTime(), price: F.pricePerKg(p) })).sort((a, b) => a.t - b.t);
+  if (!ps.length) return null;
+  return ts => { let best = ps[0]; for (const p of ps) if (p.t <= ts) best = p; return best.price; };
+}
+
+function weeklyConsumption() {
+  const monday = new Date(); monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const items = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = F.addDays(monday.getTime(), -7 * i), e = F.addDays(d, 7);
+    const v = data.fills.filter(f => f.ts >= d && f.ts < e).reduce((a, f) => a + f.kg, 0);
+    items.push({ v, label: fmtShort(d), full: `tydzień od ${fmtShort(d)}` });
+  }
+  return items;
+}
+
+/** kg pelletu na stopniodzień, miesiąc po miesiącu – zużycie „oczyszczone” z pogody. */
+function efficiencyByMonth() {
+  const tempMap = weather ? { ...weather.history, ...weather.forecast } : null;
+  if (!tempMap) return [];
+  const base = data.settings.baseTemp;
+  const m = new Map();
+  for (const iv of F.fillIntervals(data.fills)) {
+    const h = F.hddIntegral(iv.start, iv.end, tempMap, base);
+    if (!(h > 0)) continue;
+    const d = new Date(iv.start), k = `${d.getFullYear()}-${d.getMonth()}`;
+    if (!m.has(k)) m.set(k, { d: new Date(d.getFullYear(), d.getMonth(), 1), kg: 0, h: 0 });
+    const r = m.get(k); r.kg += iv.kg; r.h += h;
+  }
+  return [...m.values()].filter(r => r.h >= 100).sort((a, b) => a.d - b.d).slice(-12)
+    .map(r => ({ v: r.kg / r.h, label: r.d.toLocaleDateString('pl-PL', { month: 'short' }), full: r.d.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }) }));
+}
+
+/** Uruchomienia palnika i godziny pracy dzień po dniu (z historii pieca). */
+function burnerByDay() {
+  const rows = P.piec().rows;
+  if (!rows.length) return [];
+  const cycles = P.burnerCycles(rows);
+  const now = Date.now();
+  const first = F.startOfDay(Math.min(...rows.map(r => r[0])));
+  const items = [];
+  for (let d = first; d <= now; d = F.addDays(d, 1)) {
+    const e = F.addDays(d, 1);
+    const starts = cycles.filter(c => c.start >= d && c.start < e).length;
+    const hours = cycles.reduce((s, c) => s + Math.max(0, Math.min(e, c.end ?? now) - Math.max(d, c.start)), 0) / 3600e3;
+    items.push({ v: starts, hours, label: fmtShort(d), full: fmtDay(d) });
+  }
+  return items.slice(-30);
+}
+
+function viewStats() {
+  if (!data.fills.length && !data.purchases.length) return '<p class="muted pad">Statystyki pojawią się, gdy dodasz pierwsze dosypania.</p>';
+  const s = data.settings;
+  const c = compute();
+  const now = Date.now();
+  const price = priceLookup();
+  const cost = fs => (price ? fs.reduce((a, f) => a + f.kg * price(f.ts), 0) : null);
+
+  // bieżący sezon vs ubiegły do tej samej daty
+  const ss = F.seasonStart(now), ps = F.seasonStart(now - 365 * DAY), pe = now - 365 * DAY;
+  const cur = data.fills.filter(f => f.ts >= ss);
+  const prev = data.fills.filter(f => f.ts >= ps && f.ts < pe);
+  const curKg = cur.reduce((a, f) => a + f.kg, 0), prevKg = prev.reduce((a, f) => a + f.kg, 0);
+  const firstCur = cur.length ? Math.min(...cur.map(f => f.ts)) : now;
+  const days = Math.max(1, (now - Math.max(ss, Math.min(firstCur, now - DAY))) / DAY);
+  const diff = prevKg > 0 ? (curKg / prevKg - 1) * 100 : null;
+  let coldest = null;
+  if (weather?.history) for (const [d, t] of Object.entries(weather.history)) if (F.parseYmd(d).getTime() >= ss && (coldest == null || t < coldest.t)) coldest = { d, t };
+  const curCost = cost(cur);
+  const tiles = [
+    [`Sezon ${F.seasonLabel(now)}`, `${nf(curKg / 1000, 2)} t`, bags(curKg)],
+    ['Koszt sezonu', curCost != null ? money(curCost) : '—', curCost != null && curKg ? `${money((curCost / curKg) * 1000)}/t średnio` : 'dodaj zakup z ceną'],
+    ['Średnio na dobę', `${nf(curKg / days, 1)} kg`, curCost != null ? `${money(curCost / days, 2)} dziennie` : ''],
+    ['Vs ubiegły sezon', diff == null ? '—' : `${diff > 0 ? '+' : ''}${nf(diff)}%`, diff == null ? 'brak danych sprzed roku' : `do tej samej daty: ${nf(prevKg / 1000, 2)} t`],
+  ];
+  if (coldest) tiles.push(['Najzimniejszy dzień', `${nf(coldest.t, 1)} °C`, `${fmtDate(F.parseYmd(coldest.d).getTime())}, średnia doby`]);
+  if (c.model.type === 'weather') tiles.push(['Przy −10 °C', `${nf(F.rateAt(c.model, -10, s.baseTemp), 1)} kg/dobę`, bags(F.rateAt(c.model, -10, s.baseTemp)) + ' dziennie']);
+
+  // pogoda
+  let modelInfo;
+  if (c.model.type === 'weather') {
+    const rows = [10, 5, 0, -5, -10, -15].map(t => `<tr><td>${t} °C</td><td>${nf(F.rateAt(c.model, t, s.baseTemp), 1)} kg</td><td>${bags(F.rateAt(c.model, t, s.baseTemp))}</td></tr>`).join('');
+    modelInfo = `<p class="small">Dobowe zużycie przy średniej temperaturze dnia (wyliczone z ${c.model.n} okresów między dosypaniami):</p>
+      <table class="tbl"><thead><tr><th>Temp.</th><th>kg/dobę</th><th>worki</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } else if (c.model.type === 'average') {
+    modelInfo = `<p class="small">Średnie zużycie: <b>${nf(c.model.avg, 1)} kg/dobę</b>. ${s.lat == null ? 'Ustaw lokalizację w zakładce Więcej, żeby uwzględniać pogodę.' : 'Model pogodowy potrzebuje min. ~2 tygodni wpisów przy różnej pogodzie.'}</p>`;
+  } else modelInfo = '<p class="small muted">Za mało danych.</p>';
+
+  const eff = efficiencyByMonth();
+  const burner = P.piecConfigured() && C.signedIn() ? burnerByDay() : [];
+  const bs = burner.length ? P.burnerStats() : null;
+  const seasons = seasonsTable();
+  const buys = data.purchases.filter(p => p.kg > 0 && p.goodsPrice > 0).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+
+  return `
+    <section class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><span class="label">${l}</span><span class="v">${v}</span>${sub ? `<span class="muted small">${sub}</span>` : ''}</div>`).join('')}</section>
+    <section class="card">
+      <h3>Zużycie tygodniowe (kg)</h3>
+      <div class="chart" id="weekChart"></div>
+    </section>
+    <section class="card">
+      <h3>Zużycie miesięczne (kg)</h3>
+      <div class="chart" id="monthChart"></div>
+    </section>
+    ${price ? `<section class="card"><h3>Wydatki na opał (zł / miesiąc)</h3><div class="chart" id="costChart"></div>
+      <p class="muted small">Spalony pellet × cena z zakupu, z którego pochodził (ostatni zakup przed dosypaniem).</p></section>` : ''}
+    ${burner.length ? `<section class="card"><h3>Piec: uruchomienia na dobę</h3><div class="chart" id="burnerChart"></div>
+      <p class="muted small">${bs?.perDay != null ? `Średnio <b>${nf(bs.perDay, 1)}</b> uruchomień na dobę` : 'Zbieram dane'}${bs?.avgCycleMin != null ? `, cykl pracy ok. <b>${bs.avgCycleMin >= 90 ? `${nf(bs.avgCycleMin / 60, 1)} h` : `${Math.round(bs.avgCycleMin)} min`}</b>` : ''}. Częste krótkie cykle (dużo uruchomień) zużywają zapalarkę i pogarszają spalanie – warto wtedy obniżyć moc albo poszerzyć histerezę.</p></section>` : ''}
+    ${eff.length >= 2 ? `<section class="card"><h3>Efektywność (kg na stopniodzień)</h3><div class="chart" id="effChart"></div>
+      <p class="muted small">Zużycie podzielone przez „ilość zimna” (stopniodni poniżej ${nf(s.baseTemp)} °C), więc niezależne od pogody. Niższy słupek = mniej pelletu przy tej samej pogodzie, np. po regulacji pieca czy uszczelnieniu domu.</p></section>` : ''}
+    <section class="card">
+      <h3>Jak zużycie zależy od pogody</h3>
+      ${modelInfo}
+    </section>
+    ${seasons.length ? `<section class="card"><h3>Sezony grzewcze</h3>
+      <table class="tbl"><thead><tr><th>Sezon</th><th>Spalono</th><th>Kupiono</th><th>Wydano</th></tr></thead><tbody>
+      ${seasons.map(([k, r]) => `<tr><td>${k}</td><td>${nf(r.burned / 1000, 2)} t</td><td>${nf(r.bought / 1000, 2)} t</td><td>${money(r.cost)}</td></tr>`).join('')}
+      </tbody></table></section>` : ''}
+    ${buys.length ? `<section class="card"><h3>Ceny zakupów</h3>
+      <table class="tbl"><thead><tr><th>Data</th><th>zł/t</th><th>Dostawca</th></tr></thead><tbody>
+      ${buys.map(p => `<tr><td>${fmtShort(F.parseYmd(p.date).getTime())} ${p.date.slice(0, 4)}</td><td>${money(F.pricePerKg(p) * 1000)}</td><td>${esc(supplierName(p.supplierId) || '—')}</td></tr>`).join('')}
+      </tbody></table></section>` : ''}`;
 }
 
 function seasonsTable() {
@@ -737,32 +867,7 @@ function seasonsTable() {
 
 function viewMore() {
   const s = data.settings;
-  const c = compute();
-  let modelInfo = '';
-  if (c.model.type === 'weather') {
-    const rows = [10, 5, 0, -5, -10, -15].map(t => `<tr><td>${t} °C</td><td>${nf(F.rateAt(c.model, t, s.baseTemp), 1)} kg</td><td>${bags(F.rateAt(c.model, t, s.baseTemp))}</td></tr>`).join('');
-    modelInfo = `<p class="small">Dobowe zużycie przy średniej temperaturze dnia (wyliczone z ${c.model.n} okresów między dosypaniami):</p>
-      <table class="tbl"><thead><tr><th>Temp.</th><th>kg/dobę</th><th>worki</th></tr></thead><tbody>${rows}</tbody></table>`;
-  } else if (c.model.type === 'average') {
-    modelInfo = `<p class="small">Średnie zużycie: <b>${nf(c.model.avg, 1)} kg/dobę</b>. ${s.lat == null ? 'Ustaw lokalizację poniżej, żeby prognoza uwzględniała pogodę.' : 'Model pogodowy potrzebuje min. ~2 tygodni wpisów przy różnej pogodzie.'}</p>`;
-  } else {
-    modelInfo = '<p class="small muted">Za mało danych.</p>';
-  }
-  const seasons = seasonsTable();
   return `
-    <section class="card">
-      <h3>Zużycie miesięczne (kg)</h3>
-      ${data.fills.length ? '<div class="chart" id="monthChart"></div>' : '<p class="muted small">Brak danych.</p>'}
-    </section>
-    <section class="card">
-      <h3>Jak zużycie zależy od pogody</h3>
-      ${modelInfo}
-    </section>
-    ${seasons.length ? `<section class="card"><h3>Sezony grzewcze</h3>
-      <table class="tbl"><thead><tr><th>Sezon</th><th>Spalono</th><th>Kupiono</th><th>Wydano</th></tr></thead><tbody>
-      ${seasons.map(([k, r]) => `<tr><td>${k}</td><td>${nf(r.burned / 1000, 2)} t</td><td>${nf(r.bought / 1000, 2)} t</td><td>${money(r.cost)}</td></tr>`).join('')}
-      </tbody></table></section>` : ''}
-
     <section class="card">
       <h3>Ustawienia</h3>
       <form id="settings" class="fields">
@@ -843,7 +948,8 @@ const VIEWS = {
   zuzycie: ['Zużycie', viewFills],
   zakupy: ['Zakupy', viewPurchases],
   dostawcy: ['Dostawcy', viewSuppliers],
-  wiecej: ['Statystyki i ustawienia', viewMore],
+  statystyki: ['Statystyki', viewStats],
+  wiecej: ['Ustawienia', viewMore],
 };
 
 function current() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'pulpit'; }
@@ -869,6 +975,14 @@ function drawCharts() {
   }
   const mc = $('#monthChart');
   if (mc) drawBarChart(mc, monthlyConsumption(), v => `${nf(v)} kg · ${bags(v)}`);
+  const wc = $('#weekChart');
+  if (wc) drawBarChart(wc, weeklyConsumption(), v => `${nf(v)} kg · ${bags(v)}`);
+  const cc = $('#costChart');
+  if (cc) { const pr = priceLookup(); drawBarChart(cc, monthlyConsumption(f => f.kg * pr(f.ts)), v => money(v)); }
+  const ec = $('#effChart');
+  if (ec) drawBarChart(ec, efficiencyByMonth(), v => `${nf(v, 2)} kg na stopniodzień`);
+  const bc = $('#burnerChart');
+  if (bc) drawBarChart(bc, burnerByDay(), (v, it) => `${v} ${v === 1 ? 'uruchomienie' : v % 10 >= 2 && v % 10 <= 4 && (v % 100 < 10 || v % 100 >= 20) ? 'uruchomienia' : 'uruchomień'} · ${nf(it.hours, 1)} h pracy`);
 }
 
 async function refreshWeather(force = false) {
