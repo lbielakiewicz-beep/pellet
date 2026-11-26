@@ -110,8 +110,18 @@ export function pendingRefills(settings, fills) {
 
 // ---------- uruchomienia palnika ----------
 // Stany „pracuje” i „nie pracuje”; pozostałe (Alarm, Czyszczenie, nieznane) nie zmieniają oceny.
-const ON = new Set(['Rozpalanie', 'Stabilizacja', 'Praca', 'Podtrzymanie']);
-const OFF = new Set(['Wygaszanie', 'Wygaszony', 'Postój', 'Nadzór', 'Wyłączony']);
+// Rozpoznajemy po początku nazwy – sterowniki dopisują warianty, np. „Praca PID”.
+const KINDS = [
+  [/^rozpal/i, 'ignite', true], [/^(praca|stabiliz)/i, 'on', true], [/^podtrzym/i, 'low', true],
+  [/^wygaszanie/i, 'fade', false], [/^(wygaszon|postój|nadzór)/i, 'off', false], [/^wyłącz/i, 'power', false],
+  [/alarm/i, 'alarm', null], [/^(czyszcz|kalibr)/i, 'clean', null],
+];
+
+/** Rodzaj stanu sterownika: { kind, on } – on: true pali się, false nie, null nie wiadomo (alarm, czyszczenie, nieznany). */
+export function stateKind(state) {
+  const k = KINDS.find(([re]) => re.test(String(state || '').trim()));
+  return k ? { kind: k[1], on: k[2] } : { kind: 'unknown', on: null };
+}
 
 /** Cykle pracy z historii stanów: [{ start, end }] – start = przejście z postoju do pracy (lub nowe rozpalanie). */
 export function burnerCycles(rows = st.rows) {
@@ -119,9 +129,9 @@ export function burnerCycles(rows = st.rows) {
   const cycles = [];
   let on = null, prevState = null;
   for (const [ts, , , , , state] of pts) {
-    const isOn = ON.has(state) ? true : OFF.has(state) ? false : null;
+    const { kind, on: isOn } = stateKind(state);
     if (isOn === true) {
-      const restart = state === 'Rozpalanie' && prevState !== 'Rozpalanie' && on === true;
+      const restart = kind === 'ignite' && stateKind(prevState).kind !== 'ignite' && on === true;
       if (on === false || restart) {
         if (restart && cycles.length && cycles[cycles.length - 1].end == null) cycles[cycles.length - 1].end = ts;
         cycles.push({ start: ts, end: null });

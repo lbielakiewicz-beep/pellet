@@ -434,13 +434,11 @@ const PIEC_ICON = {
 
 /** Ikona stanu sterownika: płomień = pali się, pauza = czeka, itd. */
 function stateIcon(state) {
-  const m = {
-    Rozpalanie: ['flame', 'ignite'], Stabilizacja: ['flame', 'on'], Praca: ['flame', 'on'],
-    Podtrzymanie: ['flame', 'low'], Wygaszanie: ['flame', 'fade'],
-    Wygaszony: ['pause', 'off'], 'Postój': ['pause', 'off'], 'Nadzór': ['pause', 'off'],
-    'Wyłączony': ['power', 'off'], Czyszczenie: ['clean', 'on'], Kalibracja: ['clean', 'on'], Alarm: ['alarm', 'alarm'],
-  }[state] || ['unknown', 'off'];
-  return { svg: PIEC_ICON[m[0]], cls: m[1] };
+  const [ic, cls] = {
+    ignite: ['flame', 'ignite'], on: ['flame', 'on'], low: ['flame', 'low'], fade: ['flame', 'fade'],
+    off: ['pause', 'off'], power: ['power', 'off'], alarm: ['alarm', 'alarm'], clean: ['clean', 'on'],
+  }[P.stateKind(state).kind] || ['unknown', 'off'];
+  return { svg: PIEC_ICON[ic], cls };
 }
 
 function piecPanel() {
@@ -495,7 +493,7 @@ function notifications() {
     if (p) {
       const { pct } = hopperLevel(p);
       if (pct != null && pct <= 15) out.push({ id: `hopper:${F.ymd(Date.now())}`, level: pct <= 5 ? 'crit' : 'warn', ts: p.ts, html: `W zasobniku pieca zostało ok. <b>${nf(pct)}%</b> – czas dosypać.` });
-      if (p.state === 'Alarm') out.push({ id: `alarm:${F.ymd(p.ts)}`, level: 'crit', ts: p.ts, html: '<b>Piec zgłasza alarm.</b> Sprawdź panel sterownika.' });
+      if (P.stateKind(p.state).kind === 'alarm') out.push({ id: `alarm:${F.ymd(p.ts)}`, level: 'crit', ts: p.ts, html: '<b>Piec zgłasza alarm.</b> Sprawdź panel sterownika.' });
       if (!p.online) out.push({ id: `offline:${F.ymd(Date.now())}`, level: 'warn', ts: p.ts, html: `Sterownik pieca jest offline (ostatni odczyt ${fmtShort(p.ts)} ${fmtTime(p.ts)}).` });
     }
   }
